@@ -1,0 +1,98 @@
+### Requisições de teste (Parte 4) - extensão "REST Client" do VS Code.
+### Rode antes: npm run db:seed (cria os dados e usuários de exemplo).
+
+@host = http://localhost:3000
+
+### Login como operador de cadastro (pode criar/alterar organizações)
+# @name login
+POST {{host}}/auth/login
+Content-Type: application/json
+
+{ "usuario": "operador", "senha": "Operador@123" }
+
+###
+@token = {{login.response.body.token}}
+
+### 1) Listar organizações -> 200 (3 do seed)
+GET {{host}}/organizacoes
+Authorization: Bearer {{token}}
+
+### 2) Buscar por nome
+GET {{host}}/organizacoes?busca=Hospital&ativo=true
+Authorization: Bearer {{token}}
+
+### 3) Detalhe de uma organização do seed (Banco Horizonte)
+GET {{host}}/organizacoes/00000000-0000-4000-8000-0000000000a1
+Authorization: Bearer {{token}}
+
+### 4) Criar organização COM contrato -> 201
+# @name criada
+POST {{host}}/organizacoes
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "razaoSocial": "Rede Varejo Sul Ltda",
+  "cnpj": "11.444.777/0001-61",
+  "email": "ti@varejosul.example",
+  "contrato": {
+    "dataVencimento": "2027-12-31",
+    "clausulas": ["Coleta quinzenal", "Certificado ambiental"],
+    "valorMensal": 4500.90,
+    "renovacaoAutomatica": true
+  }
+}
+
+###
+@orgId = {{criada.response.body.id}}
+
+### 5) CNPJ repetido -> 409
+POST {{host}}/organizacoes
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "razaoSocial": "Outra Empresa", "cnpj": "11444777000161" }
+
+### 6) CNPJ inválido -> 400
+POST {{host}}/organizacoes
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "razaoSocial": "Empresa Falsa", "cnpj": "11111111111111" }
+
+### 7) Atualizar endereço (versao 1) -> 200 e versao passa a 2
+PUT {{host}}/organizacoes/{{orgId}}
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "enderecoCompleto": "Rua Nova, 10 - Porto Alegre/RS", "versao": 1 }
+
+### 8) Repetir o MESMO envio (versao 1 desatualizada) -> 409 (versionamento otimista)
+PUT {{host}}/organizacoes/{{orgId}}
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "enderecoCompleto": "Outro endereço", "versao": 1 }
+
+### 9) Dar contrato à Universidade (que não tinha) -> 200
+PUT {{host}}/organizacoes/00000000-0000-4000-8000-0000000000a3/contrato
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "dataVencimento": "2028-06-30", "clausulas": ["Coleta semestral"], "valorMensal": 3000 }
+
+### 10) Renovar contrato do Hospital (versao do CONTRATO = 1) -> 200
+PATCH {{host}}/organizacoes/00000000-0000-4000-8000-0000000000a2/contrato/renovar
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "novoVencimento": "2029-01-31", "versao": 1 }
+
+### 11) Desativar organização com lotes não finalizados (Banco) -> 422
+PATCH {{host}}/organizacoes/00000000-0000-4000-8000-0000000000a1/ativo
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "ativo": false, "versao": 1 }
+
+### 12) Auditor não pode criar -> 403 (faça login como auditor e use o token dele)

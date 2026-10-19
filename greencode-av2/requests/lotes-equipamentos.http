@@ -1,0 +1,181 @@
+### Requisições de teste (Parte 5) - extensão "REST Client" do VS Code.
+### Pré-requisito: npm run db:seed e npm run dev.
+### Execute os blocos NA ORDEM (os seguintes reaproveitam ids e versões dos anteriores).
+
+@host = http://localhost:3000
+
+### Login como gestor de almoxarifado (registra lotes, triagem e movimentações)
+# @name login
+POST {{host}}/auth/login
+Content-Type: application/json
+
+{ "usuario": "gestor", "senha": "Gestor@123" }
+
+###
+@token = {{login.response.body.token}}
+
+### 1) Criar lote COM 2 equipamentos (Banco Horizonte) -> 201 (tudo numa transação)
+# @name lote
+POST {{host}}/lotes
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "organizacaoId": "00000000-0000-4000-8000-0000000000a1",
+  "notaFiscal": "NF-777001",
+  "transportadora": "TransRapida",
+  "equipamentos": [
+    { "tipo": "NOTEBOOK", "marca": "Dell", "modelo": "Latitude 7490", "anoFabricacao": 2019, "estadoFisico": "USADO_LEVE", "pesoQuilogramas": 1.8 },
+    { "tipo": "MONITOR", "marca": "Samsung", "modelo": "S24", "anoFabricacao": 2018, "pesoQuilogramas": 3.4 }
+  ]
+}
+
+###
+@loteId = {{lote.response.body.id}}
+@loteVersao = {{lote.response.body.versao}}
+
+### 2) Data de entrada futura -> 400
+POST {{host}}/lotes
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "organizacaoId": "00000000-0000-4000-8000-0000000000a1", "notaFiscal": "NF-1", "transportadora": "X", "dataEntrada": "2099-01-01" }
+
+### 3) Data de entrada com mais de 90 dias -> 400
+POST {{host}}/lotes
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "organizacaoId": "00000000-0000-4000-8000-0000000000a1", "notaFiscal": "NF-2", "transportadora": "X", "dataEntrada": "2020-01-01" }
+
+### 4) Adicionar mais um equipamento (envia a versão do lote) -> 201, versão do lote vira 2
+# @name adicionou
+POST {{host}}/lotes/{{loteId}}/equipamentos
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "versao": {{loteVersao}}, "equipamentos": [ { "tipo": "IMPRESSORA", "anoFabricacao": 2017, "pesoQuilogramas": 4.2 } ] }
+
+###
+@loteVersao2 = {{adicionou.response.body.versao}}
+
+### 5) Repetir com a versão antiga -> 409 (versionamento otimista)
+POST {{host}}/lotes/{{loteId}}/equipamentos
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "versao": {{loteVersao}}, "equipamentos": [ { "tipo": "ROTEADOR", "anoFabricacao": 2020, "pesoQuilogramas": 1.0 } ] }
+
+### 6) Processar a triagem -> 200, lote TRIAGEM_CONCLUIDA e equipamentos EM_TRIAGEM
+# @name triagem
+POST {{host}}/lotes/{{loteId}}/triagem
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "versao": {{loteVersao2}} }
+
+### 7) Listar os equipamentos do lote
+# @name equips
+GET {{host}}/equipamentos?loteId={{loteId}}
+Authorization: Bearer {{token}}
+
+###
+@eqId = {{equips.response.body.$[0].id}}
+@eqVersao = {{equips.response.body.$[0].versao}}
+
+### 8) Status sem justificativa -> 422
+PATCH {{host}}/equipamentos/{{eqId}}/status
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "status": "AGUARDANDO_DESMONTE", "justificativa": "", "versao": {{eqVersao}} }
+
+### 9) Triagem completa -> pode ir para desmonte -> 200
+# @name statusOk
+PATCH {{host}}/equipamentos/{{eqId}}/status
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "status": "AGUARDANDO_DESMONTE", "justificativa": "Triagem concluída, equipamento apto ao desmonte.", "versao": {{eqVersao}} }
+
+### 10) Transição inválida (AGUARDANDO_DESMONTE -> BAIXA_DEFINITIVA) -> 422
+PATCH {{host}}/equipamentos/{{eqId}}/status
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "status": "BAIXA_DEFINITIVA", "justificativa": "tentativa", "versao": {{statusOk.response.body.versao}} }
+
+### 11) Desmonte ANTES da triagem completa (equipamento do seed, lote ainda EM_TRIAGEM) -> 422
+# @name seedEq
+GET {{host}}/equipamentos?status=EM_TRIAGEM
+Authorization: Bearer {{token}}
+
+###
+PATCH {{host}}/equipamentos/{{seedEq.response.body.$[0].id}}/status
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "status": "AGUARDANDO_DESMONTE", "justificativa": "teste", "versao": {{seedEq.response.body.$[0].versao}} }
+
+### 12) Estado físico caindo 3 categorias SEM justificativa -> 422
+PATCH {{host}}/equipamentos/{{eqId}}/estado-fisico
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "estadoFisico": "DANIFICADO_GRAVE", "versao": {{statusOk.response.body.versao}} }
+
+### 13) Mesma queda, COM justificativa -> 200
+PATCH {{host}}/equipamentos/{{eqId}}/estado-fisico
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "estadoFisico": "DANIFICADO_GRAVE", "justificativa": "Tela quebrada durante o transporte.", "versao": {{statusOk.response.body.versao}} }
+
+### 14) Movimentação física (sem mudar o status) -> 201
+POST {{host}}/equipamentos/{{eqId}}/movimentacoes
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "destino": "Galpão B - Prateleira 4", "observacao": "Guardado para desmonte." }
+
+### 15) Rastreabilidade completa do equipamento (histórico de movimentações)
+GET {{host}}/equipamentos/{{eqId}}/rastreamento
+Authorization: Bearer {{token}}
+
+### 16) Detalhe do lote (inclui resumo com peso total e texto do relatório de triagem)
+GET {{host}}/lotes/{{loteId}}
+Authorization: Bearer {{token}}
+
+### 17) Relatório por organização (Banco Horizonte)
+GET {{host}}/relatorios/organizacao/00000000-0000-4000-8000-0000000000a1
+Authorization: Bearer {{token}}
+
+### 18) Relatório por status
+GET {{host}}/relatorios/status/AGUARDANDO_DESMONTE
+Authorization: Bearer {{token}}
+
+### 19) Relatório financeiro
+GET {{host}}/relatorios/financeiro
+Authorization: Bearer {{token}}
+
+### 20) Auditoria como GESTOR -> 403 (somente admin e auditor)
+GET {{host}}/auditoria
+Authorization: Bearer {{token}}
+
+### 21) Login como auditor e consulta do journal -> 200
+# @name loginAud
+POST {{host}}/auth/login
+Content-Type: application/json
+
+{ "usuario": "auditor", "senha": "Auditor@123" }
+
+###
+GET {{host}}/auditoria?entidade=Equipamento&limite=20
+Authorization: Bearer {{loginAud.response.body.token}}
+
+### 22) Auditor tentando criar lote -> 403 (somente leitura)
+POST {{host}}/lotes
+Authorization: Bearer {{loginAud.response.body.token}}
+Content-Type: application/json
+
+{ "organizacaoId": "00000000-0000-4000-8000-0000000000a1", "notaFiscal": "NF-9", "transportadora": "X" }

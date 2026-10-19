@@ -4,6 +4,7 @@
 
 RESUMO (depois de instalar Node.js e MySQL e criar o banco "greencode"):
 
+     cd greencode-av2           (pasta do código, dentro do repositório)
      copy .env.example .env      (e editar a senha do MySQL no .env)
      npm install
      npm run setup               (cria as tabelas e os dados de exemplo)
@@ -21,7 +22,7 @@ Os detalhes de cada etapa estão abaixo.
 
  Funciona em Windows 10+ e Ubuntu 24.04+ (e derivados).
  Abra o terminal (cmd/PowerShell no Windows, terminal no Ubuntu) DENTRO
- da pasta do projeto (a que contém o arquivo package.json).
+ da pasta greencode-av2 (a que contém o arquivo package.json).
 
 ---------------------------------------------------------------------
  1. CRIAR O BANCO DE DADOS (MySQL Workbench)
@@ -231,15 +232,16 @@ Os detalhes de cada etapa estão abaixo.
 ---------------------------------------------------------------------
  11. ONDE ESTÁ CADA COISA
 ---------------------------------------------------------------------
- README.md                  visão geral do projeto
- docs/docs.md               documentação técnica (no padrão da AV1)
- docs/ARQUITETURA.md        decisões, trade-offs, limites do monolito
- docs/API.md                todas as rotas, papéis e erros
- docs/CHECKLIST.md          requisitos da AV2 x onde foram feitos
- prisma/schema.prisma       modelo do banco
- prisma/seed.ts             dados de exemplo
- prisma/sql/                constraints CHECK e triggers opcionais
- src/                       código (rotas > controllers > serviços >
-                            repositórios)
- tests/                     testes unitários e de integração
+ README.md                          (raiz) visão geral do projeto
+ docs/docs.md                       documentação técnica (no padrão da AV1)
+ docs/ARQUITETURA.md                decisões, trade-offs, limites do monolito
+ docs/API.md                        todas as rotas, papéis e erros
+ docs/CHECKLIST.md                  requisitos da AV2 x onde foram feitos
+ docs/PASSO-A-PASSO.txt             este arquivo
+ greencode-av2/prisma/schema.prisma modelo do banco
+ greencode-av2/prisma/seed.ts       dados de exemplo
+ greencode-av2/prisma/sql/          constraints CHECK e triggers opcionais
+ greencode-av2/src/                 código (rotas > controllers > serviços >
+                                    repositórios)
+ greencode-av2/tests/               testes unitários e de integração
 =====================================================================

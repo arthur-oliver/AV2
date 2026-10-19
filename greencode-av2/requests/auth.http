@@ -1,0 +1,53 @@
+### Requisições de teste (Parte 3).
+### Use com a extensão "REST Client" do VS Code (clique em "Send Request" acima de cada bloco).
+### Também funciona no Postman/Insomnia (copie método, URL, cabeçalhos e corpo).
+
+@host = http://localhost:3000
+
+### 1) Login como administrador
+# @name login
+POST {{host}}/auth/login
+Content-Type: application/json
+
+{ "usuario": "admin", "senha": "Admin@123" }
+
+###
+@token = {{login.response.body.token}}
+
+### 2) Quem sou eu? (precisa do token)
+GET {{host}}/auth/me
+Authorization: Bearer {{token}}
+
+### 3) Sem token -> 401
+GET {{host}}/auth/me
+
+### 4) Listar usuários (admin) -> 200
+GET {{host}}/usuarios
+Authorization: Bearer {{token}}
+
+### 5) Criar usuário (admin) -> 201
+POST {{host}}/usuarios
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "usuario": "maria.silva", "senha": "Maria@2026", "papel": "OPERADOR_CADASTRO" }
+
+### 6) Login como auditor
+# @name loginAuditor
+POST {{host}}/auth/login
+Content-Type: application/json
+
+{ "usuario": "auditor", "senha": "Auditor@123" }
+
+###
+@tokenAuditor = {{loginAuditor.response.body.token}}
+
+### 7) Auditor tentando listar usuários -> 403 (sem permissão)
+GET {{host}}/usuarios
+Authorization: Bearer {{tokenAuditor}}
+
+### 8) Senha errada -> 401
+POST {{host}}/auth/login
+Content-Type: application/json
+
+{ "usuario": "admin", "senha": "errada" }
