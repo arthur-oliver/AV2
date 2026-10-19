@@ -1,0 +1,517 @@
+// Testes de integração das regras de administração: edição, exclusão e proteção do sistema.
+// Mesmo pré-requisito do fluxo.test.ts: banco migrado e populado (npm run setup) e .env configurado.
+//
+// Os testes criam usuários, organizações e lotes temporários (nomes com sufixo único) e, ao terminar,
+// desativam os usuários temporários. Nenhum dado do seed é alterado de forma permanente.
+import type { FastifyInstance } from 'fastify';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { construirApp } from '../../src/app';
+import { gerarCnpjValido } from '../helpers/cnpj';
+import { criarCliente } from '../helpers/api';
+
+let app: FastifyInstance;
+const api = criarCliente(() => app);
+const { req } = api;
+const tokens: Record<string, string> = {};
+
+const SUFIXO = Date.now().toString(36);
+const SENHA = 'Senha@12345';
+const usuariosTemporarios: string[] = []; // ids, para desativar no final
+
+async function criarUsuario(papel: string, apelido: string) {
+  const r = await req(tokens.super, 'POST', '/usuarios', { usuario: `t_${apelido}_${SUFIXO}`, senha: SENHA, papel });
+  expect(r.statusCode).toBe(201);
+  const u = r.json() as { id: string; usuario: string; versao: number; papel: string };
+  usuariosTemporarios.push(u.id);
+  return u;
+}
+
+const buscarUsuario = async (id: string) => (await req(tokens.super, 'GET', `/usuarios/${id}`)).json();
+const buscarLote = async (id: string) => (await req(tokens.gestor, 'GET', `/lotes/${id}`)).json();
+const buscarEquipamento = async (id: string) => (await req(tokens.gestor, 'GET', `/equipamentos/${id}`)).json();
+const buscarOrg = async (id: string) => (await req(tokens.operador, 'GET', `/organizacoes/${id}`)).json();
+
+beforeAll(async () => {
+  app = await construirApp();
+  await app.ready();
+  tokens.super = await api.login('superusuario', 'Super@123');
+  tokens.admin = await api.login('admin', 'Admin@123');
+  tokens.operador = await api.login('operador', 'Operador@123');
+  tokens.gestor = await api.login('gestor', 'Gestor@123');
+  tokens.auditor = await api.login('auditor', 'Auditor@123');
+});
+
+afterAll(async () => {
+  // Desativa os usuários temporários (sem erro se a regra de continuidade impedir algum caso).
+  for (const id of usuariosTemporarios) {
+    await req(tokens.super, 'PATCH', `/usuarios/${id}/ativo`, { ativo: false });
+  }
+  await app.close();
+});
+
+// ---------------------------------------------------------------------------------------------
+describe('usuários: gestão de contas', () => {
+  it('cria, consulta e filtra por papel', async () => {
+    const u = await criarUsuario('AUDITOR', 'consulta');
+    expect(u.versao).toBe(1);
+    expect(u).not.toHaveProperty('senhaHash');
+
+    const um = await req(tokens.super, 'GET', `/usuarios/${u.id}`);
+    expect(um.statusCode).toBe(200);
+    expect(um.json().usuario).toBe(u.usuario);
+
+    const lista = await req(tokens.super, 'GET', '/usuarios?papel=AUDITOR&ativo=true');
+    expect(lista.statusCode).toBe(200);
+    expect((lista.json() as { id: string }[]).some((x) => x.id === u.id)).toBe(true);
+
+    expect((await req(tokens.super, 'GET', '/usuarios/00000000-0000-4000-8000-00000000ffff')).statusCode).toBe(404);
+  });
+
+  it('troca o papel com versionamento otimista', async () => {
+    const u = await criarUsuario('OPERADOR_CADASTRO', 'papel');
+
+    const ok = await req(tokens.super, 'PUT', `/usuarios/${u.id}`, { papel: 'GESTOR_ALMOXARIFADO', versao: u.versao });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json().papel).toBe('GESTOR_ALMOXARIFADO');
+    expect(ok.json().versao).toBe(2);
+
+    // mesma versão de novo = alguém alterou antes
+    const conflito = await req(tokens.super, 'PUT', `/usuarios/${u.id}`, { papel: 'AUDITOR', versao: u.versao });
+    expect(conflito.statusCode).toBe(409);
+
+    // trocar para o papel que já tem
+    const igual = await req(tokens.super, 'PUT', `/usuarios/${u.id}`, { papel: 'GESTOR_ALMOXARIFADO', versao: 2 });
+    expect(igual.statusCode).toBe(422);
+
+    // desativa no fim: um gestor temporário ativo atrapalharia o teste "não deixa o sistema sem GESTOR..."
+    expect((await req(tokens.super, 'PATCH', `/usuarios/${u.id}/ativo`, { ativo: false })).statusCode).toBe(200);
+  });
+
+  it('ninguém altera o próprio papel, desativa ou exclui a própria conta', async () => {
+    const eu = (await req(tokens.super, 'GET', '/auth/me')).json() as { id: string };
+    const papel = await req(tokens.super, 'PUT', `/usuarios/${eu.id}`, { papel: 'AUDITOR', versao: 1 });
+    expect(papel.statusCode).toBe(422);
+    const desativar = await req(tokens.super, 'PATCH', `/usuarios/${eu.id}/ativo`, { ativo: false });
+    expect(desativar.statusCode).toBe(422);
+    const excluir = await req(tokens.super, 'DELETE', `/usuarios/${eu.id}`);
+    expect(excluir.statusCode).toBe(422);
+  });
+
+  it('o superusuário redefine a senha de outro usuário', async () => {
+    const u = await criarUsuario('AUDITOR', 'senha');
+    expect((await api.tentarLogin(u.usuario, SENHA)).statusCode).toBe(200);
+
+    const fraca = await req(tokens.super, 'POST', `/usuarios/${u.id}/redefinir-senha`, { novaSenha: 'abcdefgh' });
+    expect(fraca.statusCode).toBe(422); // sem número
+
+    const r = await req(tokens.super, 'POST', `/usuarios/${u.id}/redefinir-senha`, { novaSenha: 'NovaSenha@99' });
+    expect(r.statusCode).toBe(204);
+    expect((await api.tentarLogin(u.usuario, SENHA)).statusCode).toBe(401);
+    expect((await api.tentarLogin(u.usuario, 'NovaSenha@99')).statusCode).toBe(200);
+  });
+
+  it('usuário desativado perde o acesso, inclusive com token antigo, e pode ser reativado', async () => {
+    const u = await criarUsuario('AUDITOR', 'ativo');
+    const token = await api.login(u.usuario, SENHA);
+    expect((await req(token, 'GET', '/auth/me')).statusCode).toBe(200);
+
+    const off = await req(tokens.super, 'PATCH', `/usuarios/${u.id}/ativo`, { ativo: false });
+    expect(off.statusCode).toBe(200);
+    expect(off.json().ativo).toBe(false);
+    expect((await api.tentarLogin(u.usuario, SENHA)).statusCode).toBe(401);
+    expect((await req(token, 'GET', '/auth/me')).statusCode).toBe(401);
+
+    const on = await req(tokens.super, 'PATCH', `/usuarios/${u.id}/ativo`, { ativo: true });
+    expect(on.json().ativo).toBe(true);
+    expect((await api.tentarLogin(u.usuario, SENHA)).statusCode).toBe(200);
+  });
+
+  it('exclui apenas contas sem histórico', async () => {
+    // Com histórico: já fez login, então só pode ser desativado.
+    const usado = await criarUsuario('AUDITOR', 'usado');
+    await api.login(usado.usuario, SENHA);
+    const negado = await req(tokens.super, 'DELETE', `/usuarios/${usado.id}`);
+    expect(negado.statusCode).toBe(422);
+    expect(negado.json().mensagem).toContain('histórico');
+    expect((await buscarUsuario(usado.id)).id).toBe(usado.id);
+
+    // Sem histórico: criada e nunca usada.
+    const novo = await criarUsuario('AUDITOR', 'novo');
+    const ok = await req(tokens.super, 'DELETE', `/usuarios/${novo.id}`);
+    expect(ok.statusCode).toBe(204);
+    expect((await req(tokens.super, 'GET', `/usuarios/${novo.id}`)).statusCode).toBe(404);
+  });
+
+  // Regra principal: o sistema nunca fica sem administrador, operador ou gestor ativos.
+  // O teste cria um usuário extra do papel, desativa-o (ainda sobra o do seed) e então tenta
+  // mexer no ÚLTIMO ativo. Se o banco tiver usuários extras do papel (de testes manuais), o teste é pulado.
+  async function verificarUltimoAtivo(papel: string, apelido: string, ctx: { skip: () => void }) {
+    const extra = await criarUsuario(papel, apelido);
+    expect((await req(tokens.super, 'PATCH', `/usuarios/${extra.id}/ativo`, { ativo: false })).statusCode).toBe(200);
+
+    const ativos = (await req(tokens.super, 'GET', `/usuarios?papel=${papel}&ativo=true`)).json() as { id: string; versao: number }[];
+    if (ativos.length !== 1) ctx.skip();
+    const ultimo = ativos[0];
+
+    const desativar = await req(tokens.super, 'PATCH', `/usuarios/${ultimo.id}/ativo`, { ativo: false });
+    expect(desativar.statusCode).toBe(422);
+    expect(desativar.json().mensagem).toContain('nenhum usuário ativo');
+
+    const trocar = await req(tokens.super, 'PUT', `/usuarios/${ultimo.id}`, { papel: 'AUDITOR', versao: ultimo.versao });
+    expect(trocar.statusCode).toBe(422);
+
+    const excluir = await req(tokens.super, 'DELETE', `/usuarios/${ultimo.id}`);
+    expect(excluir.statusCode).toBe(422);
+
+    // continua ativo e no mesmo papel
+    const depois = await buscarUsuario(ultimo.id);
+    expect(depois.ativo).toBe(true);
+    expect(depois.papel).toBe(papel);
+  }
+
+  it('não deixa o sistema sem OPERADOR_CADASTRO ativo', async (ctx) => {
+    await verificarUltimoAtivo('OPERADOR_CADASTRO', 'ultimo_op', ctx);
+  });
+
+  it('não deixa o sistema sem GESTOR_ALMOXARIFADO ativo', async (ctx) => {
+    await verificarUltimoAtivo('GESTOR_ALMOXARIFADO', 'ultimo_gt', ctx);
+  });
+
+  it('não deixa o sistema sem ADMINISTRADOR ativo', async (ctx) => {
+    await verificarUltimoAtivo('ADMINISTRADOR', 'ultimo_adm', ctx);
+  });
+
+  it('a troca de papel vale imediatamente, mesmo com o token antigo', async () => {
+    // Rota liberada ao administrador e ao operador, mas não ao auditor: DELETE de uma organização inexistente
+    // responde 404 (autorizado) ou 403 (sem permissão).
+    const rota = '/organizacoes/00000000-0000-4000-8000-00000000ffff?versao=1';
+    const b = await criarUsuario('ADMINISTRADOR', 'adm_b');
+    const tokenB = await api.login(b.usuario, SENHA);
+    expect((await req(tokenB, 'DELETE', rota)).statusCode).toBe(404);
+
+    // existe outro administrador ativo (o do seed), então a troca é permitida
+    const r = await req(tokens.super, 'PUT', `/usuarios/${b.id}`, { papel: 'AUDITOR', versao: b.versao });
+    expect(r.statusCode).toBe(200);
+
+    // o token ainda diz "ADMINISTRADOR", mas o papel valido é o do banco
+    expect((await req(tokenB, 'DELETE', rota)).statusCode).toBe(403);
+    expect((await req(tokenB, 'GET', '/auth/me')).json().papel).toBe('AUDITOR');
+  });
+
+  it('bloqueia o login por 15 minutos depois de 5 senhas erradas seguidas (429)', async () => {
+    const u = await criarUsuario('AUDITOR', 'forca_bruta');
+    for (let i = 0; i < 5; i++) {
+      expect((await api.tentarLogin(u.usuario, 'errada123')).statusCode).toBe(401);
+    }
+    // agora até a senha correta é recusada
+    const bloqueado = await api.tentarLogin(u.usuario, SENHA);
+    expect(bloqueado.statusCode).toBe(429);
+    expect(bloqueado.json().erro).toBe('MUITAS_TENTATIVAS');
+
+    // o superusuário libera ao redefinir a senha
+    expect((await req(tokens.super, 'POST', `/usuarios/${u.id}/redefinir-senha`, { novaSenha: 'Liberada@123' })).statusCode).toBe(204);
+    expect((await api.tentarLogin(u.usuario, 'Liberada@123')).statusCode).toBe(200);
+  });
+
+  it('só o superusuário gerencia usuários (nem o administrador)', async () => {
+    const u = await criarUsuario('AUDITOR', 'permissao');
+    for (const quem of ['admin', 'operador', 'gestor', 'auditor']) {
+      expect((await req(tokens[quem], 'GET', '/usuarios')).statusCode).toBe(403);
+      expect((await req(tokens[quem], 'GET', `/usuarios/${u.id}`)).statusCode).toBe(403);
+      expect((await req(tokens[quem], 'PATCH', `/usuarios/${u.id}/nome`, { nome: 'Fulano', versao: 1 })).statusCode).toBe(403);
+      expect((await req(tokens[quem], 'PUT', `/usuarios/${u.id}`, { papel: 'GESTOR_ALMOXARIFADO', versao: 1 })).statusCode).toBe(403);
+      expect((await req(tokens[quem], 'POST', `/usuarios/${u.id}/redefinir-senha`, { novaSenha: 'Qualquer@123' })).statusCode).toBe(403);
+      expect((await req(tokens[quem], 'DELETE', `/usuarios/${u.id}`)).statusCode).toBe(403);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+describe('superusuário: único responsável pelas contas', () => {
+  it('existe um único superusuário e ele aparece em /auth/me', async () => {
+    const eu = (await req(tokens.super, 'GET', '/auth/me')).json();
+    expect(eu.papel).toBe('SUPERUSUARIO');
+    const lista = (await req(tokens.super, 'GET', '/usuarios?papel=SUPERUSUARIO')).json() as unknown[];
+    expect(lista).toHaveLength(1);
+  });
+
+  it('ninguém cria nem atribui o papel SUPERUSUARIO pela API', async () => {
+    const criar = await req(tokens.super, 'POST', '/usuarios', { usuario: `t_dup_${SUFIXO}`, senha: SENHA, papel: 'SUPERUSUARIO' });
+    expect(criar.statusCode).toBe(400);
+    const u = await criarUsuario('AUDITOR', 'promocao');
+    const promover = await req(tokens.super, 'PUT', `/usuarios/${u.id}`, { papel: 'SUPERUSUARIO', versao: u.versao });
+    expect(promover.statusCode).toBe(400);
+  });
+
+  it('o superusuário não opera lotes, equipamentos nem organizações (separação de funções)', async () => {
+    expect((await req(tokens.super, 'GET', '/lotes')).statusCode).toBe(403);
+    expect((await req(tokens.super, 'GET', '/organizacoes')).statusCode).toBe(403);
+  });
+
+  it('o superusuário não redefine a própria senha por /usuarios (usa /auth/alterar-senha)', async () => {
+    const eu = (await req(tokens.super, 'GET', '/auth/me')).json() as { id: string };
+    const r = await req(tokens.super, 'POST', `/usuarios/${eu.id}/redefinir-senha`, { novaSenha: 'Outra@12345' });
+    expect(r.statusCode).toBe(422);
+  });
+
+  it('altera o nome de qualquer usuário (com versão) e cada um altera o próprio nome', async () => {
+    const u = await criarUsuario('AUDITOR', 'nome');
+    const ok = await req(tokens.super, 'PATCH', `/usuarios/${u.id}/nome`, { nome: '  Maria   da Silva ', versao: u.versao });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json().nome).toBe('Maria da Silva');
+    expect(ok.json().versao).toBe(u.versao + 1);
+
+    // versão antiga -> conflito
+    const velho = await req(tokens.super, 'PATCH', `/usuarios/${u.id}/nome`, { nome: 'Outro Nome', versao: u.versao });
+    expect(velho.statusCode).toBe(409);
+
+    // o próprio usuário altera o seu nome, usando a versão de /auth/me
+    const token = await api.login(u.usuario, SENHA);
+    const eu = (await req(token, 'GET', '/auth/me')).json() as { nome: string; versao: number };
+    expect(eu.nome).toBe('Maria da Silva');
+    const proprio = await req(token, 'PUT', '/auth/perfil', { nome: 'Maria Souza', versao: eu.versao });
+    expect(proprio.statusCode).toBe(200);
+    expect((await buscarUsuario(u.id)).nome).toBe('Maria Souza');
+
+    // nome curto demais
+    expect((await req(token, 'PUT', '/auth/perfil', { nome: 'M', versao: eu.versao + 1 })).statusCode).toBe(400);
+  });
+
+  it('cada usuário troca a própria senha em /auth/alterar-senha', async () => {
+    const u = await criarUsuario('AUDITOR', 'propria_senha');
+    const token = await api.login(u.usuario, SENHA);
+    const r = await req(token, 'POST', '/auth/alterar-senha', { senhaAtual: SENHA, novaSenha: 'Trocada@12345' });
+    expect(r.statusCode).toBe(204);
+    expect((await api.tentarLogin(u.usuario, 'Trocada@12345')).statusCode).toBe(200);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+describe('relatórios em CSV', () => {
+  it('?formato=csv baixa o arquivo; sem o parâmetro continua JSON', async () => {
+    for (const url of ['/relatorios/financeiro', '/relatorios/status/AGUARDANDO_TRIAGEM', '/auditoria?limite=5']) {
+      const csv = await req(tokens.auditor, 'GET', `${url}${url.includes('?') ? '&' : '?'}formato=csv`);
+      expect(csv.statusCode).toBe(200);
+      expect(csv.headers['content-type']).toContain('text/csv');
+      expect(csv.headers['content-disposition']).toContain('attachment; filename=');
+      expect(csv.body.startsWith('\uFEFF')).toBe(true);
+      expect(csv.body).toContain(';');
+
+      const json = await req(tokens.auditor, 'GET', url);
+      expect(json.headers['content-type']).toContain('application/json');
+    }
+  });
+
+  it('o CSV respeita as mesmas permissões e valida o formato', async () => {
+    const sem = await app.inject({ method: 'GET', url: '/auditoria?formato=csv' });
+    expect(sem.statusCode).toBe(401);
+    expect((await req(tokens.gestor, 'GET', '/auditoria?formato=csv')).statusCode).toBe(403);
+    expect((await req(tokens.auditor, 'GET', '/relatorios/financeiro?formato=xml')).statusCode).toBe(400);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+describe('lotes e equipamentos: correção e exclusão', () => {
+  let orgId = '';
+  let loteId = '';
+  let eqIds: string[] = [];
+
+  beforeAll(async () => {
+    const org = await req(tokens.operador, 'POST', '/organizacoes', {
+      razaoSocial: `Edição ${SUFIXO} Ltda`,
+      cnpj: gerarCnpjValido(),
+      contrato: { dataVencimento: '2099-12-31', clausulas: ['Coleta mensal'], valorMensal: 500 }
+    });
+    expect(org.statusCode).toBe(201);
+    orgId = org.json().id;
+
+    const lote = await req(tokens.gestor, 'POST', '/lotes', {
+      organizacaoId: orgId,
+      notaFiscal: 'NF-ED-1',
+      transportadora: 'Transp A',
+      equipamentos: [
+        { tipo: 'NOTEBOOK', marca: 'Dell', anoFabricacao: 2020, pesoQuilogramas: 2 },
+        { tipo: 'MONITOR', marca: 'LG', anoFabricacao: 2019, pesoQuilogramas: 3 },
+        { tipo: 'IMPRESSORA', marca: 'HP', anoFabricacao: 2018, pesoQuilogramas: 5 }
+      ]
+    });
+    expect(lote.statusCode).toBe(201);
+    loteId = lote.json().id;
+    eqIds = (lote.json().equipamentos as { id: string }[]).map((e) => e.id);
+  });
+
+  it('corrige nota fiscal, transportadora e observações do lote', async () => {
+    const antes = await buscarLote(loteId);
+    const r = await req(tokens.gestor, 'PUT', `/lotes/${loteId}`, {
+      notaFiscal: 'NF-ED-CORRIGIDA',
+      transportadora: 'Transp B',
+      observacoes: 'Corrigido após conferência',
+      versao: antes.versao
+    });
+    expect(r.statusCode).toBe(200);
+    expect(r.json().notaFiscal).toBe('NF-ED-CORRIGIDA');
+    expect(r.json().versao).toBe(antes.versao + 1);
+
+    // versão antiga: conflito
+    const conflito = await req(tokens.gestor, 'PUT', `/lotes/${loteId}`, { notaFiscal: 'X', versao: antes.versao });
+    expect(conflito.statusCode).toBe(409);
+  });
+
+  it('valida a correção do lote (campo vazio e data de entrada)', async () => {
+    const lote = await buscarLote(loteId);
+    expect((await req(tokens.gestor, 'PUT', `/lotes/${loteId}`, { versao: lote.versao })).statusCode).toBe(400);
+    expect((await req(tokens.gestor, 'PUT', `/lotes/${loteId}`, { dataEntrada: '2099-01-01', versao: lote.versao })).statusCode).toBe(400);
+    expect((await req(tokens.gestor, 'PUT', `/lotes/${loteId}`, { dataEntrada: '2020-01-01', versao: lote.versao })).statusCode).toBe(400);
+
+    const hoje = new Date().toISOString().slice(0, 10);
+    const ok = await req(tokens.gestor, 'PUT', `/lotes/${loteId}`, { dataEntrada: hoje, versao: lote.versao });
+    expect(ok.statusCode).toBe(200);
+  });
+
+  it('corrige os dados cadastrais de um equipamento', async () => {
+    const antes = await buscarEquipamento(eqIds[0]);
+    const r = await req(tokens.gestor, 'PUT', `/equipamentos/${eqIds[0]}`, { marca: 'Lenovo', modelo: 'T480', pesoQuilogramas: 1.75, versao: antes.versao });
+    expect(r.statusCode).toBe(200);
+    expect(r.json().marca).toBe('Lenovo');
+    expect(Number(r.json().pesoQuilogramas)).toBe(1.75);
+    expect(r.json().codigoBarrasInterno).toBe(antes.codigoBarrasInterno); // o código nunca muda
+    expect(r.json().versao).toBe(antes.versao + 1);
+
+    // versão desatualizada, campo vazio, ano absurdo e peso inválido
+    expect((await req(tokens.gestor, 'PUT', `/equipamentos/${eqIds[0]}`, { marca: 'Outra', versao: antes.versao })).statusCode).toBe(409);
+    const atual = await buscarEquipamento(eqIds[0]);
+    expect((await req(tokens.gestor, 'PUT', `/equipamentos/${eqIds[0]}`, { versao: atual.versao })).statusCode).toBe(400);
+    expect((await req(tokens.gestor, 'PUT', `/equipamentos/${eqIds[0]}`, { anoFabricacao: 2099, versao: atual.versao })).statusCode).toBe(400);
+    expect((await req(tokens.gestor, 'PUT', `/equipamentos/${eqIds[0]}`, { pesoQuilogramas: 0, versao: atual.versao })).statusCode).toBe(400);
+  });
+
+  it('a correção fica registrada no journal com o antes e o depois', async () => {
+    const r = await req(tokens.auditor, 'GET', `/auditoria?entidade=Equipamento&entidadeId=${eqIds[0]}`);
+    const registros = r.json().registros as { operacao: string; dadosAntes: Record<string, unknown> | null; dadosDepois: Record<string, unknown> | null }[];
+    const edicao = registros.find((x) => x.operacao === 'ATUALIZAR' && x.dadosDepois?.marca === 'Lenovo');
+    expect(edicao).toBeDefined();
+    expect(edicao!.dadosAntes?.marca).toBe('Dell');
+  });
+
+  it('exclui um equipamento antes da triagem e registra a exclusão', async () => {
+    const eq = await buscarEquipamento(eqIds[2]);
+
+    // versão desatualizada
+    expect((await req(tokens.gestor, 'DELETE', `/equipamentos/${eqIds[2]}?versao=${eq.versao + 5}`)).statusCode).toBe(409);
+    // sem informar a versão
+    expect((await req(tokens.gestor, 'DELETE', `/equipamentos/${eqIds[2]}`)).statusCode).toBe(400);
+
+    const ok = await req(tokens.gestor, 'DELETE', `/equipamentos/${eqIds[2]}?versao=${eq.versao}`);
+    expect(ok.statusCode).toBe(204);
+    expect((await req(tokens.gestor, 'GET', `/equipamentos/${eqIds[2]}`)).statusCode).toBe(404);
+    expect((await buscarLote(loteId)).equipamentos).toHaveLength(2);
+
+    const journal = (await req(tokens.auditor, 'GET', `/auditoria?entidade=Equipamento&entidadeId=${eqIds[2]}`)).json().registros as { operacao: string }[];
+    expect(journal.some((x) => x.operacao === 'EXCLUIR')).toBe(true);
+  });
+
+  it('exclui um lote inteiro (com equipamentos) antes da triagem', async () => {
+    const lote = await req(tokens.gestor, 'POST', '/lotes', {
+      organizacaoId: orgId,
+      notaFiscal: 'NF-DESCARTE',
+      transportadora: 'Transp C',
+      equipamentos: [{ tipo: 'ROTEADOR', anoFabricacao: 2021, pesoQuilogramas: 1 }]
+    });
+    const { id, versao } = lote.json() as { id: string; versao: number };
+
+    expect((await req(tokens.gestor, 'DELETE', `/lotes/${id}?versao=${versao + 3}`)).statusCode).toBe(409);
+    const ok = await req(tokens.gestor, 'DELETE', `/lotes/${id}?versao=${versao}`);
+    expect(ok.statusCode).toBe(204);
+
+    expect((await req(tokens.gestor, 'GET', `/lotes/${id}`)).statusCode).toBe(404);
+    expect((await req(tokens.gestor, 'GET', `/equipamentos?loteId=${id}`)).json()).toEqual([]);
+    const journal = (await req(tokens.auditor, 'GET', `/auditoria?entidade=Lote&entidadeId=${id}`)).json().registros as { operacao: string }[];
+    expect(journal.some((x) => x.operacao === 'EXCLUIR')).toBe(true);
+  });
+
+  it('depois da triagem, o lote e seus equipamentos não podem mais ser excluídos nem ter a data alterada', async () => {
+    const antes = await buscarLote(loteId);
+    expect((await req(tokens.gestor, 'POST', `/lotes/${loteId}/triagem`, { versao: antes.versao })).statusCode).toBe(200);
+
+    const lote = await buscarLote(loteId);
+    const excluirLote = await req(tokens.gestor, 'DELETE', `/lotes/${loteId}?versao=${lote.versao}`);
+    expect(excluirLote.statusCode).toBe(422);
+
+    const eq = await buscarEquipamento(eqIds[0]);
+    const excluirEq = await req(tokens.gestor, 'DELETE', `/equipamentos/${eqIds[0]}?versao=${eq.versao}`);
+    expect(excluirEq.statusCode).toBe(422);
+
+    const hoje = new Date().toISOString().slice(0, 10);
+    expect((await req(tokens.gestor, 'PUT', `/lotes/${loteId}`, { dataEntrada: hoje, versao: lote.versao })).statusCode).toBe(422);
+    // mas nota fiscal e observações ainda podem ser corrigidas
+    expect((await req(tokens.gestor, 'PUT', `/lotes/${loteId}`, { observacoes: 'Ajuste pós-triagem', versao: lote.versao })).statusCode).toBe(200);
+  });
+
+  it('respeita as permissões por papel', async () => {
+    const lote = await buscarLote(loteId);
+    const eq = await buscarEquipamento(eqIds[0]);
+    for (const quem of ['auditor', 'operador']) {
+      expect((await req(tokens[quem], 'PUT', `/lotes/${loteId}`, { notaFiscal: 'X', versao: lote.versao })).statusCode).toBe(403);
+      expect((await req(tokens[quem], 'DELETE', `/lotes/${loteId}?versao=${lote.versao}`)).statusCode).toBe(403);
+      expect((await req(tokens[quem], 'PUT', `/equipamentos/${eqIds[0]}`, { marca: 'X', versao: eq.versao })).statusCode).toBe(403);
+      expect((await req(tokens[quem], 'DELETE', `/equipamentos/${eqIds[0]}?versao=${eq.versao}`)).statusCode).toBe(403);
+    }
+  });
+
+  // Organizações (usam o orgId criado acima, que já tem lotes)
+  it('organização com lotes no histórico não pode ser excluída (nem o contrato removido com lotes em aberto)', async () => {
+    const org = await buscarOrg(orgId);
+    const excluir = await req(tokens.operador, 'DELETE', `/organizacoes/${orgId}?versao=${org.versao}`);
+    expect(excluir.statusCode).toBe(422);
+    expect(excluir.json().mensagem).toContain('lote');
+
+    const contrato = await req(tokens.operador, 'DELETE', `/organizacoes/${orgId}/contrato?versao=${org.contrato.versao}`);
+    expect(contrato.statusCode).toBe(422);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+describe('organizações e contratos: exclusão', () => {
+  it('exclui organização sem lotes (e o contrato dela) e registra no journal', async () => {
+    const r = await req(tokens.operador, 'POST', '/organizacoes', {
+      razaoSocial: `Cadastro errado ${SUFIXO}`,
+      cnpj: gerarCnpjValido(),
+      contrato: { dataVencimento: '2099-12-31', clausulas: ['Teste'], valorMensal: 10 }
+    });
+    const org = r.json() as { id: string; versao: number; contrato: { id: string } };
+
+    expect((await req(tokens.operador, 'DELETE', `/organizacoes/${org.id}?versao=${org.versao + 4}`)).statusCode).toBe(409);
+    expect((await req(tokens.operador, 'DELETE', `/organizacoes/${org.id}`)).statusCode).toBe(400);
+    expect((await req(tokens.gestor, 'DELETE', `/organizacoes/${org.id}?versao=${org.versao}`)).statusCode).toBe(403);
+
+    const ok = await req(tokens.operador, 'DELETE', `/organizacoes/${org.id}?versao=${org.versao}`);
+    expect(ok.statusCode).toBe(204);
+    expect((await req(tokens.operador, 'GET', `/organizacoes/${org.id}`)).statusCode).toBe(404);
+
+    const journal = (await req(tokens.auditor, 'GET', `/auditoria?entidade=Organizacao&entidadeId=${org.id}`)).json().registros as { operacao: string }[];
+    expect(journal.some((x) => x.operacao === 'EXCLUIR')).toBe(true);
+    const jContrato = (await req(tokens.auditor, 'GET', `/auditoria?entidade=Contrato&entidadeId=${org.contrato.id}`)).json().registros as { operacao: string }[];
+    expect(jContrato.some((x) => x.operacao === 'EXCLUIR')).toBe(true);
+  });
+
+  it('remove o contrato de uma organização sem lotes em aberto', async () => {
+    const r = await req(tokens.operador, 'POST', '/organizacoes', {
+      razaoSocial: `Sem contrato ${SUFIXO}`,
+      cnpj: gerarCnpjValido(),
+      contrato: { dataVencimento: '2099-12-31', clausulas: ['Teste'], valorMensal: 10 }
+    });
+    const org = r.json() as { id: string; contrato: { versao: number } };
+
+    expect((await req(tokens.operador, 'DELETE', `/organizacoes/${org.id}/contrato?versao=${org.contrato.versao + 3}`)).statusCode).toBe(409);
+
+    const ok = await req(tokens.operador, 'DELETE', `/organizacoes/${org.id}/contrato?versao=${org.contrato.versao}`);
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json().contrato).toBeNull();
+    expect(ok.json().contratoVigente).toBe(false);
+
+    // não há mais contrato para remover
+    expect((await req(tokens.operador, 'DELETE', `/organizacoes/${org.id}/contrato?versao=1`)).statusCode).toBe(422);
+  });
+});
+
+// escrito com carinho por Arthur.

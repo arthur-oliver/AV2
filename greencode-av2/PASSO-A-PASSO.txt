@@ -1,0 +1,245 @@
+=====================================================================
+ GREENCODE AV2 - PASSO A PASSO PARA RODAR O PROJETO
+=====================================================================
+
+RESUMO (depois de instalar Node.js e MySQL e criar o banco "greencode"):
+
+     copy .env.example .env      (e editar a senha do MySQL no .env)
+     npm install
+     npm run setup               (cria as tabelas e os dados de exemplo)
+     npm test                    (testes automatizados)
+     npm run dev                 (sobe a API em http://127.0.0.1:3000)
+
+Os detalhes de cada etapa estão abaixo.
+
+---------------------------------------------------------------------
+ 0. O QUE PRECISA ESTAR INSTALADO
+---------------------------------------------------------------------
+ - Node.js 20 ou superior   (confira com:  node -v)
+ - MySQL Server 8.0.16 ou superior, ligado, com a senha do usuário root
+   (o MySQL Workbench é apenas o programa para visualizar/gerenciar)
+
+ Funciona em Windows 10+ e Ubuntu 24.04+ (e derivados).
+ Abra o terminal (cmd/PowerShell no Windows, terminal no Ubuntu) DENTRO
+ da pasta do projeto (a que contém o arquivo package.json).
+
+---------------------------------------------------------------------
+ 1. CRIAR O BANCO DE DADOS (MySQL Workbench)
+---------------------------------------------------------------------
+ 1.1 Abra o MySQL Workbench e conecte na sua instância local.
+ 1.2 Abra uma aba de SQL e execute:
+
+        CREATE DATABASE greencode
+          CHARACTER SET utf8mb4
+          COLLATE utf8mb4_unicode_ci;
+
+ 1.3 Confira se o banco "greencode" apareceu na lista de schemas
+     (clique em atualizar).
+
+---------------------------------------------------------------------
+ 2. CONFIGURAR O ARQUIVO .env
+---------------------------------------------------------------------
+ 2.1 Copie o modelo:
+
+        Windows (cmd):    copy .env.example .env
+        Ubuntu/Linux:     cp .env.example .env
+
+ 2.2 Abra o arquivo .env em um editor e ajuste:
+
+        DATABASE_URL="mysql://root:SUA_SENHA@localhost:3306/greencode"
+        PORT=3000
+        JWT_SECRET="uma-frase-longa-e-aleatoria-com-mais-de-32-caracteres"
+        JWT_EXPIRES_IN=1h
+
+     - Troque SUA_SENHA pela senha do root do MySQL.
+     - Se a senha tiver caracteres especiais (@ : / # ?), troque cada
+       um pelo código da URL: @ = %40   : = %3A   / = %2F   # = %23
+     - Se o MySQL usa outra porta, troque 3306.
+     - O JWT_SECRET PRECISA ter 32 ou mais caracteres.
+
+---------------------------------------------------------------------
+ 3. INSTALAR AS DEPENDÊNCIAS
+---------------------------------------------------------------------
+        npm install
+
+ Resultado esperado: instala os pacotes e, no final, executa
+ "prisma generate" sem erros. (Leva alguns minutos na primeira vez.
+ É necessário ter internet.)
+
+---------------------------------------------------------------------
+ 4. CRIAR AS TABELAS E OS DADOS DE EXEMPLO
+---------------------------------------------------------------------
+        npm run setup
+
+ Esse comando faz duas coisas:
+   a) cria as tabelas no banco (migração do Prisma);
+   b) carrega os dados de exemplo (seed).
+
+ Resultado esperado (no final):
+   "Seed concluido: 5 usuarios, 3 organizacoes, 3 lotes, 8 equipamentos."
+
+ Confira no MySQL Workbench (clique direito no schema > atualizar):
+ devem existir 7 tabelas (+ _prisma_migrations):
+   usuarios, organizacoes, contratos, lotes, equipamentos,
+   movimentacoes, journal_transacoes
+
+ Pode ser executado mais de uma vez sem duplicar dados.
+
+ SE VOCÊ JÁ TINHA O BANCO DA VERSÃO ANTERIOR (sem superusuário):
+   pare o servidor e rode, uma vez:
+        npx prisma migrate dev --name superusuario
+        npm run db:seed
+   (a migração acrescenta o papel SUPERUSUARIO e a coluna "nome"; o seed
+   cria o superusuário; nenhum dado existente é apagado).
+
+ Usuários criados:
+   superusuario / Super@123   (SUPERUSUARIO: único; gerencia as contas)
+   admin     / Admin@123      (ADMINISTRADOR)
+   operador  / Operador@123   (OPERADOR_CADASTRO)
+   gestor    / Gestor@123     (GESTOR_ALMOXARIFADO)
+   auditor   / Auditor@123    (AUDITOR)
+
+---------------------------------------------------------------------
+ 5. TESTES AUTOMATIZADOS
+---------------------------------------------------------------------
+ Com o banco criado e populado (passo 4):
+
+        npm test
+
+ Esperado: todos os testes passando (verde). O comando roda dois grupos:
+
+   npm run test:unit          Regras puras, sem banco: CNPJ, data de entrada,
+                              estado físico, transição de status, "sempre ao
+                              menos 1 usuário ativo por papel" e bloqueio de
+                              login por tentativas.
+
+   npm run test:integration   A API de verdade contra o MySQL: login e
+                              permissões por papel, organizações e contratos,
+                              lotes, triagem, rastreabilidade, relatórios,
+                              auditoria e as regras de correção/exclusão.
+
+ Os testes criam registros novos (nomes e CNPJs aleatórios) e desativam os
+ usuários temporários no final. Para voltar ao estado inicial:
+
+        npm run db:reset            (APAGA tudo e recria as tabelas)
+        npm run db:seed
+
+---------------------------------------------------------------------
+ 6. SUBIR O SERVIDOR
+---------------------------------------------------------------------
+ 6.1 Em modo desenvolvimento:
+
+        npm run dev
+
+     Resultado esperado: mensagem "Server listening at
+     http://0.0.0.0:3000" no terminal. Deixe esta janela aberta.
+     Para parar: Ctrl+C (o encerramento é seguro).
+
+ 6.2 Teste a saúde do sistema no navegador:
+
+        http://127.0.0.1:3000/health
+     Esperado: {"status":"ok","banco":"conectado",...}
+
+ 6.3 A página inicial http://127.0.0.1:3000 leva à documentação
+     interativa (Swagger).
+
+---------------------------------------------------------------------
+ 7. TESTAR A API NA MÃO (Swagger)
+---------------------------------------------------------------------
+ SWAGGER (no navegador, nada para instalar)
+
+     http://127.0.0.1:3000/docs
+
+     - Abra POST /auth/login > "Try it out", envie
+         {"usuario":"superusuario","senha":"Super@123"}
+     - Copie o valor de "token" da resposta
+     - Clique em "Authorize" (topo da página), cole o token, confirme
+     - Agora todas as rotas protegidas podem ser testadas ali mesmo
+     - ATENÇÃO: o superusuário só gerencia contas (/usuarios). Para testar
+       lotes, equipamentos e organizações, faça login com admin, operador
+       ou gestor (clique em "Authorize" > "Logout" e entre de novo).
+     Ideal para: ver todas as rotas e o que cada uma recebe e devolve.
+
+---------------------------------------------------------------------
+ 8. O QUE FOI ACRESCENTADO ALÉM DO ENUNCIADO
+---------------------------------------------------------------------
+ O enunciado pede o essencial (cadastrar, consultar e avançar status). Um
+ sistema de uso real também precisa corrigir erros, desfazer cadastros
+ feitos por engano e não ficar "trancado". Foi acrescentado:
+
+ CORRIGIR E EXCLUIR (sem perder o histórico)
+   - Lote: corrigir nota fiscal/transportadora/observações; excluir só
+     antes da triagem (leva os equipamentos junto).
+   - Equipamento: corrigir tipo/marca/modelo/ano/peso (o código de barras
+     nunca muda); excluir só antes da triagem.
+   - Organização: excluir só se nunca enviou lotes (senão, desativar);
+     remover contrato só sem lotes em aberto.
+   - Toda exclusão pede a versão do registro (evita apagar algo que mudou
+     enquanto você olhava) e fica registrada no journal, com o estado
+     anterior.
+
+ RELATÓRIOS EM CSV
+   - Os relatórios (/relatorios/...) e a auditoria (/auditoria) aceitam
+     ?formato=csv e baixam um arquivo que abre direto no Excel. Exemplo,
+     no navegador, com o Swagger: GET /relatorios/financeiro, campo
+     "formato" = csv.
+
+ PROTEÇÃO DO SISTEMA
+   - Sempre existe pelo menos 1 usuário ATIVO como administrador, 1 como
+     operador de cadastro e 1 como gestor de almoxarifado. Não dá para
+     desativar, excluir ou trocar o papel do último de cada um.
+   - Ninguém desativa, exclui ou troca o próprio papel.
+   - Quem já operou o sistema não é excluído (só desativado), para a
+     auditoria continuar mostrando quem fez o quê.
+   - Trocar o papel ou desativar um usuário vale na hora, mesmo que ele
+     ainda tenha um login aberto.
+   - 5 senhas erradas seguidas bloqueiam o login por 15 minutos.
+   - Só o SUPERUSUÁRIO (um único no sistema) cria, edita, desativa,
+     exclui e redefine a senha das contas. O administrador opera o
+     sistema, mas recebe "403" nas rotas /usuarios.
+   - O papel de superusuário não pode ser criado, dado a outra pessoa,
+     rebaixado, desativado nem excluído pela API.
+   - Cada usuário troca só a própria senha (/auth/alterar-senha) e o
+     próprio nome (/auth/perfil).
+   - O superusuário redefine a senha de outro usuário (isso também
+     libera um login bloqueado).
+   - Esqueceu a senha do superusuário? No computador do servidor, com o
+     .env configurado, rode:
+         npm run superusuario:redefinir -- NovaSenha@123
+
+ Detalhes e justificativas: docs/ARQUITETURA.md (itens 4.12 e 4.13).
+ Lista de todas as rotas: docs/API.md.
+
+---------------------------------------------------------------------
+ 9. PRODUÇÃO / ENTREGA (build)
+---------------------------------------------------------------------
+        npm run build        (compila para a pasta dist/)
+        npm run db:deploy    (aplica as migrações sem criar novas)
+        npm start            (roda dist/server.js)
+
+---------------------------------------------------------------------
+ 10. PUBLICAR NO GITHUB
+---------------------------------------------------------------------
+ - NÃO suba: .env, node_modules, dist  (já estão no .gitignore)
+ - SUBA: tudo o mais, inclusive prisma/migrations e .env.example
+ - Antes de entregar, rode do zero:
+        npm run db:reset
+        npm run db:seed
+        npm test
+   e confira docs/CHECKLIST.md.
+
+---------------------------------------------------------------------
+ 11. ONDE ESTÁ CADA COISA
+---------------------------------------------------------------------
+ README.md                  visão geral do projeto
+ docs/docs.md               documentação técnica (no padrão da AV1)
+ docs/ARQUITETURA.md        decisões, trade-offs, limites do monolito
+ docs/API.md                todas as rotas, papéis e erros
+ docs/CHECKLIST.md          requisitos da AV2 x onde foram feitos
+ prisma/schema.prisma       modelo do banco
+ prisma/seed.ts             dados de exemplo
+ prisma/sql/                constraints CHECK e triggers opcionais
+ src/                       código (rotas > controllers > serviços >
+                            repositórios)
+ tests/                     testes unitários e de integração
+=====================================================================

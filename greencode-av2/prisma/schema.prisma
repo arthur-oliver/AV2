@@ -1,0 +1,190 @@
+// Schema do Greencode AV2 (MySQL 8+).
+// Relacionamentos pedidos na AV2:
+//   Organizacao 1 --- 0..1 Contrato
+//   Organizacao 1 --- N    Lote
+//   Lote        1 --- N    Equipamento
+//   Equipamento 1 --- N    Movimentacao
+// Extras: Usuario (substitui a Credencial da AV1) e JournalTransacao (auditoria, como o journal da AV1).
+// O campo "versao" implementa o versionamento otimista (evita atualizações perdidas).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum PapelUsuario {
+  ADMINISTRADOR
+  OPERADOR_CADASTRO
+  GESTOR_ALMOXARIFADO
+  AUDITOR
+  SUPERUSUARIO
+}
+
+enum StatusLote {
+  RECEBIDO
+  EM_TRIAGEM
+  TRIAGEM_CONCLUIDA
+  ENCAMINHADO
+  FINALIZADO
+}
+
+enum TipoEquipamento {
+  COMPUTADOR_MESA
+  NOTEBOOK
+  MONITOR
+  IMPRESSORA
+  SERVIDOR
+  ROTEADOR
+  CABO_ESTRUTURADO
+  FONTE_ALIMENTACAO
+}
+
+enum EstadoFisico {
+  NOVO
+  BOM_ESTADO
+  USADO_LEVE
+  USADO_MODERADO
+  DANIFICADO_LEVE
+  DANIFICADO_GRAVE
+  INSERVIVEL
+}
+
+enum StatusRastreamento {
+  AGUARDANDO_TRIAGEM
+  EM_TRIAGEM
+  AGUARDANDO_DESMONTE
+  EM_DESMONTE
+  PECAS_REAPROVEITADAS
+  MATERIAL_RECICLAVEL
+  DESCARTE_SEGURO
+  BAIXA_DEFINITIVA
+}
+
+model Usuario {
+  id           String       @id @default(uuid()) @db.Char(36)
+  usuario      String       @unique @db.VarChar(60)
+  nome         String       @default("") @db.VarChar(120)
+  senhaHash    String       @db.VarChar(100)
+  papel        PapelUsuario
+  ativo        Boolean      @default(true)
+  ultimoAcesso DateTime?
+  criadoEm     DateTime     @default(now())
+  atualizadoEm DateTime     @updatedAt
+  versao       Int          @default(1)
+
+  @@map("usuarios")
+}
+
+model Organizacao {
+  id                String    @id @default(uuid()) @db.Char(36)
+  razaoSocial       String    @db.VarChar(200)
+  cnpj              String    @unique @db.Char(14) // somente dígitos
+  inscricaoEstadual String    @default("") @db.VarChar(30)
+  enderecoCompleto  String    @db.Text
+  telefone          String    @default("") @db.VarChar(30)
+  email             String    @default("") @db.VarChar(150)
+  ativo             Boolean   @default(true)
+  dataCadastro      DateTime  @default(now())
+  atualizadoEm      DateTime  @updatedAt
+  versao            Int       @default(1)
+
+  contrato Contrato?
+  lotes    Lote[]
+
+  @@map("organizacoes")
+}
+
+model Contrato {
+  id                  String   @id @default(uuid()) @db.Char(36)
+  organizacaoId       String   @unique @db.Char(36) // @unique garante no máximo 1 contrato por organização
+  dataAssinatura      DateTime @default(now())
+  dataVencimento      DateTime
+  clausulas           Json // lista de cláusulas (texto semiestruturado)
+  valorMensal         Decimal  @db.Decimal(12, 2)
+  renovacaoAutomatica Boolean  @default(false)
+  atualizadoEm        DateTime @updatedAt
+  versao              Int      @default(1)
+
+  organizacao Organizacao @relation(fields: [organizacaoId], references: [id], onDelete: Cascade)
+
+  @@map("contratos")
+}
+
+model Lote {
+  id                  String     @id @default(uuid()) @db.Char(36)
+  dataEntrada         DateTime
+  organizacaoId       String     @db.Char(36)
+  notaFiscal          String     @db.VarChar(60)
+  transportadora      String     @db.VarChar(120)
+  statusProcessamento StatusLote @default(RECEBIDO)
+  observacoes         String     @db.Text
+  criadoEm            DateTime   @default(now())
+  atualizadoEm        DateTime   @updatedAt
+  versao              Int        @default(1)
+
+  organizacao  Organizacao   @relation(fields: [organizacaoId], references: [id])
+  equipamentos Equipamento[]
+
+  @@index([organizacaoId])
+  @@index([dataEntrada])
+  @@map("lotes")
+}
+
+model Equipamento {
+  id                  String             @id @default(uuid()) @db.Char(36)
+  codigoBarrasInterno String             @unique @db.VarChar(40)
+  tipo                TipoEquipamento
+  marca               String             @default("") @db.VarChar(80)
+  modelo              String             @default("") @db.VarChar(80)
+  anoFabricacao       Int
+  estadoFisico        EstadoFisico
+  pesoQuilogramas     Decimal            @db.Decimal(10, 3)
+  loteId              String             @db.Char(36)
+  posicaoNoLote       Int
+  statusRastreamento  StatusRastreamento @default(AGUARDANDO_TRIAGEM)
+  criadoEm            DateTime           @default(now())
+  atualizadoEm        DateTime           @updatedAt
+  versao              Int                @default(1)
+
+  lote          Lote           @relation(fields: [loteId], references: [id])
+  movimentacoes Movimentacao[]
+
+  @@unique([loteId, posicaoNoLote])
+  @@index([statusRastreamento])
+  @@map("equipamentos")
+}
+
+model Movimentacao {
+  id            String   @id @default(uuid()) @db.Char(36)
+  equipamentoId String   @db.Char(36)
+  dataHora      DateTime @default(now())
+  origem        String   @db.VarChar(120)
+  destino       String   @db.VarChar(120)
+  responsavel   String   @db.VarChar(60)
+  observacao    String   @db.Text
+
+  equipamento Equipamento @relation(fields: [equipamentoId], references: [id])
+
+  @@index([equipamentoId, dataHora])
+  @@map("movimentacoes")
+}
+
+// Equivalente ao journal da AV1: registra antes/depois de cada operação relevante.
+model JournalTransacao {
+  id                 String   @id @default(uuid()) @db.Char(36)
+  timestamp          DateTime @default(now())
+  operacao           String   @db.VarChar(40)
+  entidade           String   @db.VarChar(40)
+  entidadeId         String   @db.Char(36)
+  dadosAntes         Json?
+  dadosDepois        Json?
+  usuarioResponsavel String   @db.VarChar(60)
+
+  @@index([entidade, entidadeId])
+  @@index([timestamp])
+  @@map("journal_transacoes")
+}
