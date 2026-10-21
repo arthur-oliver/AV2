@@ -1,137 +1,73 @@
 <img src="docs/assets/logo_greencode.png" alt="Banner do projeto" style="width:100%;">
 
-# Greencode
+# Greencode — AV2
 
-API REST monolítica em Node.js e TypeScript para apoiar a gestão da logística reversa de resíduos eletrônicos, com persistência em banco de dados relacional (MySQL). Evolução da AV1 (CLI com arquivos criptografados).
+API REST em Node.js e TypeScript para apoiar a **logística reversa de resíduos eletrônicos**: do recebimento do lote na organização até a triagem, o desmonte e a baixa definitiva de cada equipamento, com rastreabilidade e auditoria. É a evolução da AV1 (aplicação de linha de comando com arquivos criptografados), agora como servidor HTTP com banco de dados relacional.
 
-## Documentação
-[Acesse a Documentação Técnica!](./docs/docs.md)
+> **Quer executar o projeto do zero?** Siga o [passo a passo](./docs/PASSO-A-PASSO.txt). Este README apresenta o sistema; a execução é explicada somente lá.
 
-Documentos complementares: [Arquitetura e decisões](./docs/ARQUITETURA.md) · [Referência da API](./docs/API.md) · [Checklist dos requisitos](./docs/CHECKLIST.md) · [Passo a passo para executar](./docs/PASSO-A-PASSO.txt) · [Enunciado da atividade](./docs/AV2.pdf)
+## O que o sistema faz
 
-Com o servidor em execução, a documentação interativa (Swagger) fica em `http://127.0.0.1:3000/docs`.
+| Área | Funcionalidades |
+| --- | --- |
+| Organizações e contratos | Cadastro com validação de CNPJ (sem duplicidade), contrato com vigência, cláusulas e valor mensal, correção e exclusão controladas |
+| Lotes | Recebimento com nota fiscal e transportadora, data de entrada validada (nunca futura, no máximo 90 dias atrás), triagem e finalização |
+| Equipamentos | Tipo, marca, modelo, ano e peso, código de barras gerado pelo sistema, estado físico e status de rastreamento |
+| Rastreabilidade | Cada mudança de status ou de estado físico vira uma movimentação, com responsável e justificativa |
+| Relatórios e auditoria | Resumos por organização, por status e financeiro, com exportação em CSV (abre no Excel); consulta ao journal de tudo que foi criado, alterado ou excluído |
+| Contas e acesso | Login com JWT, cinco papéis com permissões distintas e gestão de contas feita por um superusuário único |
 
-## Requisitos para executar
+## Papéis
 
-- Node.js 20 ou superior
-- npm
-- MySQL Server 8.0.16 ou superior (o MySQL Workbench é apenas o cliente gráfico)
-- Windows 10+, Ubuntu 24.04+ ou derivados do Ubuntu
+| Papel | Responsabilidade |
+| --- | --- |
+| `SUPERUSUARIO` | Único no sistema; gerencia as contas de usuário (não opera lotes nem organizações) |
+| `ADMINISTRADOR` | Acesso total à operação, sem gerir contas |
+| `OPERADOR_CADASTRO` | Organizações e contratos |
+| `GESTOR_ALMOXARIFADO` | Lotes, triagem, equipamentos e movimentações |
+| `AUDITOR` | Somente consulta, relatórios e auditoria |
 
-## Instalação e execução
+## Garantias de integridade
 
-O código fica na pasta `greencode-av2`; os comandos abaixo são executados dentro dela.
+* **Sem atualizações perdidas:** versionamento otimista; alterar ou excluir exige a `versao` lida, e uma versão antiga responde 409.
+* **Tudo ou nada:** cada operação roda em transação junto com o registro de auditoria.
+* **Histórico preservado:** lote e equipamento só são excluídos antes da triagem; organização com lotes e usuário com histórico apenas são desativados.
+* **Sistema nunca sem responsáveis:** sempre existe ao menos um usuário ativo nos papéis essenciais, ninguém desativa ou exclui a si mesmo, e o papel de superusuário não pode ser criado, atribuído nem removido pela API.
+* **Acesso protegido:** senhas com bcrypt, papel conferido no banco a cada requisição e bloqueio do login por 15 minutos após 5 senhas erradas.
 
-1. Crie o banco de dados (MySQL Workbench ou terminal `mysql`):
+## Tecnologias
 
-```sql
-CREATE DATABASE greencode CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-```
+Node.js 20+, TypeScript, Fastify 5, Prisma 6, MySQL 8, JWT (`@fastify/jwt`), bcryptjs, Swagger (OpenAPI) e Vitest.
 
-2. Na pasta `greencode-av2` (terminal cmd), copie o arquivo de configuração e ajuste `DATABASE_URL` (usuário e senha do MySQL) e `JWT_SECRET` (32 caracteres ou mais):
+## Arquitetura
 
-```text
-cd greencode-av2
-
-Windows (cmd):    copy .env.example .env
-Ubuntu/Linux:     cp .env.example .env
-```
-
-3. Instale as dependências, crie as tabelas e carregue os dados de exemplo:
-
-```text
-npm install
-npm run setup
-```
-
-O comando `npm run setup` aplica as migrações (criando a primeira, se ainda não existir) e executa o seed. Todo o passo a passo, em linguagem simples, está no arquivo [`docs/PASSO-A-PASSO.txt`](./docs/PASSO-A-PASSO.txt).
-
-4. Execute:
+Monólito em camadas, com a regra de negócio separada da interface HTTP e do banco:
 
 ```text
-npm run build
-npm start
+Rotas (schema + papel) → Controllers → Serviços (regras + transação) → Repositórios (Prisma) → MySQL
 ```
 
-Para executar durante o desenvolvimento:
+Os detalhes do projeto foram listados no documento: [docs/ARQUITETURA.md](./docs/ARQUITETURA.md).
 
-```text
-npm run dev
-```
-
-O servidor inicia em `http://127.0.0.1:3000`. Teste a saúde da aplicação em `http://127.0.0.1:3000/health`.
-
-## Usuários de exemplo
-
-Criados pelo comando `npm run db:seed`:
-
-| Usuário  | Senha        | Papel                |
-| -------- | ------------ | -------------------- |
-| superusuario | Super@123 | SUPERUSUARIO (único; gerencia as contas) |
-| admin    | Admin@123    | ADMINISTRADOR        |
-| operador | Operador@123 | OPERADOR_CADASTRO    |
-| gestor   | Gestor@123   | GESTOR_ALMOXARIFADO  |
-| auditor  | Auditor@123  | AUDITOR              |
-
-Senhas de exemplo, apenas para desenvolvimento. O superusuário é o único que gerencia as contas (as demais contas operam o sistema).
-
-## Testes
-
-Automatizados (Vitest):
-
-```text
-npm run test:unit          # regras e validadores (não precisa de banco)
-npm run test:integration   # fluxo completo na API (precisa do banco migrado e do seed)
-npm test                   # todos
-```
-
-Manuais: abra `http://127.0.0.1:3000/docs` (Swagger) (o passo a passo está em `docs/PASSO-A-PASSO.txt`).
-
-Os testes de integração criam registros novos. Para voltar ao estado inicial, execute `npm run db:reset` (apaga tudo e recria as tabelas) e depois `npm run db:seed`.
-
-## Organização do repositório
+## Estrutura do repositório 
 
 ```text
 AV2/
 ├── README.md                 # este arquivo
-├── docs/                     # documentação
-│   ├── docs.md               # documentação técnica
-│   ├── ARQUITETURA.md        # decisões e trade-offs
-│   ├── API.md                # rotas, papéis e erros
-│   ├── CHECKLIST.md          # requisitos x onde foram feitos
-│   ├── PASSO-A-PASSO.txt     # como executar, em linguagem simples
-│   ├── AV2.pdf               # enunciado da atividade
-│   └── assets/               # imagens
+├── docs/                     # documentação, passo a passo e enunciado
 └── greencode-av2/            # código da API
-    ├── src/
-    │   ├── server.ts         # ponto de entrada
-    │   ├── app.ts            # montagem do Fastify (Swagger, erros, JWT, rotas)
-    │   ├── config.ts         # leitura e validação do .env
-    │   ├── rotas/            # URLs, validação (JSON Schema) e permissões
-    │   ├── controllers/      # interação HTTP
-    │   ├── servicos/         # regras e operações do sistema
-    │   ├── repositorios/     # acesso ao banco de dados (Prisma)
-    │   ├── regras/           # regras puras (estado físico, rastreamento, usuários)
-    │   ├── validadores/      # validações de entrada
-    │   ├── seguranca/        # senhas, permissões e bloqueio de login
-    │   ├── plugins/          # autenticação JWT e tratamento de erros
-    │   └── dominio/ erros/ utils/ lib/
-    ├── prisma/
-    │   ├── schema.prisma     # modelo do banco
-    │   ├── seed.ts           # dados de exemplo
-    │   ├── migrations/       # migrações geradas pelo Prisma
-    │   └── sql/              # constraints CHECK e triggers opcionais
-    ├── tests/                # testes unitários e de integração
-    ├── package.json
-    └── tsconfig.json
+    ├── src/                  # rotas, controllers, serviços, repositórios, regras, segurança...
+    ├── prisma/               # modelo do banco, migrações e dados de exemplo
+    └── tests/                # testes unitários e de integração
 ```
 
-## Observação sobre dados
+## Documentação
 
-Os dados ficam no banco MySQL `greencode`, e não mais na pasta `data/` da AV1. O arquivo `.env` contém a senha do banco e o segredo do JWT; não o envie para o repositório.
-
-## Rotas
-
-A API aceita e devolve JSON, e as rotas protegidas exigem o cabeçalho `Authorization: Bearer <token>`, obtido em `POST /auth/login`. Entre as rotas implementadas estão autenticação, gestão de usuários, cadastro, correção e exclusão de organizações e contratos, criação, triagem, correção e exclusão de lotes, equipamentos e rastreabilidade, relatórios e auditoria. Os relatórios e a auditoria também podem ser baixados em **CSV** (abre no Excel): basta acrescentar `?formato=csv`, por exemplo `/relatorios/financeiro?formato=csv`.
-
-Além do que o enunciado pedia, a API protege o próprio funcionamento: existe um único **superusuário**, o único que cria, edita, desativa e exclui contas (o administrador opera o sistema, mas não gerencia contas); sempre há ao menos um usuário ativo em cada papel essencial (administrador, operador e gestor), ninguém desativa ou exclui a si mesmo, o que já virou histórico (lote triado, organização com lotes, usuário que já operou) só é desativado, e o login é bloqueado por 15 minutos após 5 senhas erradas seguidas. Se o superusuário esquecer a senha, quem tem acesso ao servidor a redefine com `npm run superusuario:redefinir -- NovaSenha@123`. A lista completa, com as permissões de cada papel, está em [docs/API.md](./docs/API.md) e no Swagger (`/docs`).
+| Documento | Conteúdo |
+| --- | --- |
+| [Passo a passo](./docs/PASSO-A-PASSO.txt) | Como baixar, configurar, testar e executar, em linguagem simples |
+| [Documentação técnica](./docs/docs.md) | Arquitetura, segurança, validações, persistência, papéis, falhas e testes |
+| [Arquitetura e decisões](./docs/ARQUITETURA.md) | Justificativas, trade-offs e limites do monólito |
+| [Referência da API](./docs/API.md) | Todas as rotas, permissões e códigos de erro |
+| [Checklist dos requisitos](./docs/CHECKLIST.md) | Requisitos da AV2 e onde cada um foi atendido |
+| [Enunciado](./docs/AV2.pdf) | Atividade proposta |

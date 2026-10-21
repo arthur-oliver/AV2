@@ -30,9 +30,6 @@ e persiste os dados em um **banco relacional (MySQL)**, preparada para ser consu
 | Service | Regras de negócio, validações, transações, auditoria | Conhecer HTTP |
 | Repository | Consultas via Prisma Client | Regra de negócio |
 
-Benefício concreto: a mesma camada de serviços serviria a outra interface (CLI, mensageria) sem alterações — era a
-promessa da AV1 e agora foi cumprida na prática, com a troca do repositório de arquivos pelo de banco.
-
 ## 2. Do CLI (AV1) para a API (AV2)
 
 | AV1 | AV2 |
@@ -74,66 +71,47 @@ um deploy afeta tudo. **Mitigação:** módulos já separados por camada e por d
 relatórios), o que facilitaria extrair serviços no futuro. **Rejeitada:** microsserviços — complexidade operacional
 (rede, consistência eventual, observabilidade) sem necessidade atual.
 
-### 4.2 MySQL em vez de PostgreSQL
-**Escolha:** MySQL 8. **Por quê:** o enunciado aceita PostgreSQL **ou** MySQL; o MySQL Workbench já fazia parte do
-fluxo de trabalho, o que reduz a curva de aprendizado e os erros de configuração. Suporta ACID (InnoDB), enums,
-`JSON`, `DECIMAL` e `CHECK` (8.0.16+), e roda em Windows e Ubuntu. **Custo:** sem tipo `UUID` nativo (usamos
-`CHAR(36)`) e sem listas de strings (as cláusulas do contrato usam `JSON`). **Rejeitada:** PostgreSQL — tecnicamente
-equivalente aqui; a troca exige apenas mudar `provider` no `schema.prisma` e ajustar os tipos citados.
+### 4.2 Autenticação com JWT
+A API é stateless: qualquer instância valida o token sem compartilhar estado, e o token carrega id e papel.
+**Custo:** um JWT não pode ser "cancelado" antes de expirar. **Mitigação:** validade curta (`JWT_EXPIRES_IN`, padrão 1 h)
+e verificação do campo `ativo` e do papel do usuário no banco a cada requisição — desativar a conta ou trocar o papel
+vale imediatamente. **Evolução:** refresh tokens e lista de revogação.
 
-### 4.3 Fastify em vez de Express
-**Por quê:** validação nativa por JSON Schema (usada também para gerar o Swagger), hooks (`preHandler`) para
-autenticação, plugins que organizam o código e desempenho superior. **Custo:** ecossistema menor que o do Express.
+### 4.3 Senhas com bcrypt
+As senhas são guardadas com `bcryptjs` (JavaScript puro): o salt vem embutido no hash, o custo é ajustável e não há
+compilação nativa, o que garante o mesmo comportamento em Windows e Ubuntu. O login também compara contra um hash
+fictício quando o usuário não existe, para o tempo de resposta não revelar quais logins existem.
 
-### 4.4 Prisma ORM em vez de SQL manual / outro ORM
-**Por quê:** `schema.prisma` declarativo, cliente com tipos TypeScript, migrações versionadas, transações
-(`$transaction`) e consultas parametrizadas (sem SQL injection). **Custo:** consultas muito específicas podem exigir
-`$queryRaw`; camada extra de abstração. **Rejeitadas:** SQL manual (mais código e risco de erro de sintaxe) e
-TypeORM (mais verboso, menos garantias de tipos).
-
-### 4.5 JWT em vez de sessões em memória
-**Por quê:** API stateless — qualquer instância valida o token sem compartilhar estado; o token carrega id e papel
-(autorização sem consulta extra). **Custo:** um JWT não pode ser "cancelado" antes de expirar.
-**Mitigação:** validade curta (`JWT_EXPIRES_IN`, padrão 1 h) e verificação do campo `ativo` do usuário a cada
-requisição — desativar a conta bloqueia o acesso imediatamente. **Evolução:** refresh tokens e lista de revogação.
-
-### 4.6 bcrypt (bcryptjs) em vez de SHA-256
-**Por quê:** SHA-256 é rápido demais — ruim para senhas (facilita força bruta). O bcrypt é lento de propósito, tem
-salt embutido e custo ajustável. A AV1 usava SHA-256 por exigência daquela atividade e já registrava essa limitação.
-Usamos `bcryptjs` (JavaScript puro): mesmo algoritmo e formato de hash, sem compilação nativa — importante para rodar
-igual em Windows e Ubuntu. O login também compara contra um hash fictício quando o usuário não existe, para o tempo de
-resposta não revelar quais logins existem.
-
-### 4.7 Concorrência: versionamento otimista em vez de bloqueio pessimista
+### 4.4 Concorrência: versionamento otimista em vez de bloqueio pessimista
 **Escolha:** cada registro tem `versao`; o cliente devolve a versão lida e o `UPDATE ... WHERE id = ? AND versao = ?`
 só afeta a linha se ninguém alterou antes (senão **409 Conflito**). **Por quê:** conflitos são raros neste domínio,
 não segura locks de banco durante a "reflexão" do usuário e funciona bem com API stateless. **Custo:** o cliente
 precisa tratar o 409 e recarregar. **Rejeitado:** `SELECT ... FOR UPDATE` (pessimista) — locks longos e risco de
 deadlock sem ganho aqui.
 
-### 4.8 Transações
+### 4.5 Transações
 Operações com múltiplas escritas usam `prisma.$transaction`, para confirmar tudo ou nada:
 criar lote + equipamentos + movimentações + journal; processar triagem (lote + todos os equipamentos + movimentações);
 mudar status do equipamento + registrar movimentação; criar organização + contrato. O registro de **auditoria entra
 na mesma transação**: não existe alteração sem rastro, nem rastro de alteração que falhou.
 
-### 4.9 Auditoria no banco em vez de arquivo
+### 4.6 Auditoria no banco em vez de arquivo
 O journal da AV1 (arquivo com rotação em 10 MB) vira a tabela `journal_transacoes` com antes/depois em JSON, usuário
 e data, consultável por filtro (`GET /auditoria`). A retenção mínima de 180 dias passa a ser política de
 administração do banco (nenhuma rotina apaga registros); triggers opcionais impedem edição/remoção.
 
-### 4.10 Autorização por papel
+### 4.7 Autorização por papel
 Os 4 papéis da AV1 foram mantidos (matriz em `src/seguranca/permissoes.ts`). A checagem fica no `preHandler` da
 rota, antes de qualquer lógica: o auditor só lê; operador cadastra organizações/contratos; gestor cuida de lotes e
 equipamentos; administrador faz tudo na operação; o superusuário (único) é o dono das contas de acesso e não opera lotes,
 equipamentos nem organizações (separação de funções).
 
-### 4.11 Validação em três camadas
+### 4.8 Validação em três camadas
 1. **JSON Schema** nas rotas: tipos, tamanhos, enums, formatos (rejeita lixo antes de chegar ao service).
 2. **Services/regras:** regras de negócio (CNPJ, janela de 90 dias, transições de status, justificativas).
 3. **Banco:** unicidade, FKs, enums e CHECK — última linha de defesa.
 
-### 4.12 Ciclo de vida completo dos dados: corrigir e excluir sem perder o histórico
+### 4.9 Ciclo de vida completo dos dados: corrigir e excluir sem perder o histórico
 O enunciado pedia o essencial (cadastrar, consultar, avançar status). Um sistema de uso real também precisa **corrigir
 um erro de digitação** e **desfazer um cadastro feito por engano**. A regra adotada foi: *o que ainda não virou histórico
 pode ser corrigido e excluído; o que já virou histórico só avança ou é desativado.*
@@ -150,7 +128,7 @@ Toda exclusão exige a `versao` lida (`?versao=`), roda em transação e grava o
 da tabela, mas **a exclusão continua auditável**. Foi preferido o `DELETE` físico, restrito ao que não é histórico, a um
 "soft delete" em todas as tabelas: evita filtros `WHERE excluido = false` espalhados e mantém o banco enxuto.
 
-### 4.13 Proteção do próprio sistema (nunca ficar "trancado")
+### 4.10 Proteção do próprio sistema (nunca ficar "trancado")
 - **Mínimo de 1 ativo por papel essencial.** `ADMINISTRADOR`, `OPERADOR_CADASTRO` e `GESTOR_ALMOXARIFADO` sempre têm
   pelo menos um usuário ativo: sem administrador ninguém tem acesso total à operação; sem operador ninguém cadastra organizações; sem
   gestor ninguém recebe lotes. A regra (`src/regras/usuarios.ts`) vale para desativar, excluir e trocar o papel.
@@ -172,13 +150,12 @@ da tabela, mas **a exclusão continua auditável**. Foi preferido o `DELETE` fí
   O superusuário também libera o login ao redefinir a senha. **Custo:** um atacante pode travar o login de outra pessoa
   de propósito; em produção, combinar com limite por IP (rate limiting) e armazenamento compartilhado (Redis).
 
-### 4.14 Exportação dos relatórios em CSV
+### 4.11 Exportação dos relatórios em CSV
 Os relatórios e a auditoria aceitam `?formato=csv`. **Decisão:** o mesmo endpoint serve JSON ou CSV, em vez de rotas
 novas; o serviço de relatório continua devolvendo o mesmo objeto e a conversão fica em funções puras
 (`RelatorioCsv.ts`), então a regra de negócio e as permissões não mudam. **Formato:** separador `;`, vírgula decimal e
 BOM UTF-8, porque é o que o Excel em português abre sem assistente de importação; CRLF e aspas conforme a RFC 4180.
 **Segurança:** texto que começa com `=`, `+`, `-` ou `@` recebe um apóstrofo na frente (injeção de fórmula em CSV).
-**Alternativa rejeitada:** gerar XLSX/PDF, que exigiria uma biblioteca a mais para o mesmo ganho neste escopo.
 
 ## 5. Segurança
 

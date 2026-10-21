@@ -29,8 +29,8 @@ Baseado no texto do enunciado da AV2 (que é narrativo e não traz lista numerad
 | 23 | Reflexão sobre limites do monólito | `docs/ARQUITETURA.md` (seção 6) | ✅ |
 | 24 | Compatível com Windows 10+ e Ubuntu 24.04+ | Sem dependências nativas; instruções para ambos no README | ⚠️ valide rodando nos dois, se possível |
 | 25 | Testes | `tests/unit` (sem banco) e `tests/integration` (API + MySQL) | ✅ |
-| 26 | *(extra)* Corrigir e excluir lotes, equipamentos, organizações, contratos e usuários, sem perder o histórico | `PUT`/`DELETE` nas rotas; `docs/ARQUITETURA.md` (4.12) | ✅ |
-| 27 | *(extra)* Sempre ao menos 1 usuário ativo em cada papel essencial; sem autoexclusão | `src/regras/usuarios.ts`, `UsuarioServico` (4.13) | ✅ |
+| 26 | *(extra)* Corrigir e excluir lotes, equipamentos, organizações, contratos e usuários, sem perder o histórico | `PUT`/`DELETE` nas rotas; `docs/ARQUITETURA.md` (4.9) | ✅ |
+| 27 | *(extra)* Sempre ao menos 1 usuário ativo em cada papel essencial; sem autoexclusão | `src/regras/usuarios.ts`, `UsuarioServico` (4.10) | ✅ |
 | 28 | *(extra)* Superusuário único, dono das contas de usuário; cada usuário altera só a própria senha e o próprio nome; script de recuperação | `src/regras/usuarios.ts`, `UsuarioServico`, `prisma/redefinir-superusuario.ts` | ✅ |
 | 29 | *(extra)* Papel conferido no banco a cada requisição; bloqueio de login por tentativas; redefinição de senha | `plugins/auth.ts`, `seguranca/tentativasLogin.ts` | ✅ |
 | 30 | *(extra)* Exportação dos relatórios e da auditoria em CSV (`?formato=csv`) | `utils/csv.ts`, `servicos/RelatorioCsv.ts` | ✅ |

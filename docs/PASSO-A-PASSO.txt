@@ -4,7 +4,8 @@
 
 RESUMO (depois de instalar Node.js e MySQL e criar o banco "greencode"):
 
-     cd greencode-av2           (pasta do código, dentro do repositório)
+     git clone https://github.com/arthur-oliver/AV2.git
+     cd AV2\greencode-av2       (Linux: cd AV2/greencode-av2)
      copy .env.example .env      (e editar a senha do MySQL no .env)
      npm install
      npm run setup               (cria as tabelas e os dados de exemplo)
@@ -14,9 +15,29 @@ RESUMO (depois de instalar Node.js e MySQL e criar o banco "greencode"):
 Os detalhes de cada etapa estão abaixo.
 
 ---------------------------------------------------------------------
+ ANTES DE COMEÇAR: BAIXAR O PROJETO E ENTRAR NA PASTA DO CÓDIGO
+---------------------------------------------------------------------
+ 1) Baixe o projeto do GitHub (com o Git instalado):
+
+        git clone https://github.com/arthur-oliver/AV2.git
+
+    (ou, no site do repositório, botão "Code" > "Download ZIP" e extraia).
+
+ 2) Entre na pasta greencode-av2, que fica DENTRO da pasta baixada:
+
+        Windows (cmd):    cd AV2\greencode-av2
+        Ubuntu/Linux:     cd AV2/greencode-av2
+
+ Todos os comandos dos passos seguintes (npm install, npm run setup,
+ npm test, npm run dev...) devem ser executados nesta pasta, a que
+ contém o arquivo package.json. A documentação (README e pasta docs)
+ fica fora dela, na raiz do repositório.
+
+---------------------------------------------------------------------
  0. O QUE PRECISA ESTAR INSTALADO
 ---------------------------------------------------------------------
  - Node.js 20 ou superior   (confira com:  node -v)
+ - Git                       (para baixar o projeto do GitHub)
  - MySQL Server 8.0.16 ou superior, ligado, com a senha do usuário root
    (o MySQL Workbench é apenas o programa para visualizar/gerenciar)
 
@@ -77,7 +98,7 @@ Os detalhes de cada etapa estão abaixo.
    b) carrega os dados de exemplo (seed).
 
  Resultado esperado (no final):
-   "Seed concluido: 5 usuarios, 3 organizacoes, 3 lotes, 8 equipamentos."
+   "Seed concluído: 5 usuários, 3 organizações, 3 lotes, 8 equipamentos."
 
  Confira no MySQL Workbench (clique direito no schema > atualizar):
  devem existir 7 tabelas (+ _prisma_migrations):
@@ -85,13 +106,6 @@ Os detalhes de cada etapa estão abaixo.
    movimentacoes, journal_transacoes
 
  Pode ser executado mais de uma vez sem duplicar dados.
-
- SE VOCÊ JÁ TINHA O BANCO DA VERSÃO ANTERIOR (sem superusuário):
-   pare o servidor e rode, uma vez:
-        npx prisma migrate dev --name superusuario
-        npm run db:seed
-   (a migração acrescenta o papel SUPERUSUARIO e a coluna "nome"; o seed
-   cria o superusuário; nenhum dado existente é apagado).
 
  Usuários criados:
    superusuario / Super@123   (SUPERUSUARIO: único; gerencia as contas)
@@ -103,16 +117,28 @@ Os detalhes de cada etapa estão abaixo.
 ---------------------------------------------------------------------
  5. TESTES AUTOMATIZADOS
 ---------------------------------------------------------------------
+
  Com o banco criado e populado (passo 4):
 
         npm test
 
- Esperado: todos os testes passando (verde). O comando roda dois grupos:
+ O terminal lista CADA teste, um por linha, com um ✓ (passou) na frente,
+ agrupados por arquivo, por exemplo:
+
+        ✓ tests/unit/usuarios.test.ts > regras do superusuário > ...
+        ✓ tests/integration/fluxo.test.ts > organizações e contratos > ...
+
+ No final aparece o resumo ("Test Files" e "Tests"). Esperado: todos
+ passando, sem nenhum ✗ (falha). Um teste marcado com ↓ foi pulado de
+ propósito: acontece só quando o banco já tem usuários extras do mesmo
+ papel, e isso não é erro.
+
+ O comando roda dois grupos (cada um também pode ser rodado sozinho):
 
    npm run test:unit          Regras puras, sem banco: CNPJ, data de entrada,
                               estado físico, transição de status, "sempre ao
-                              menos 1 usuário ativo por papel" e bloqueio de
-                              login por tentativas.
+                              menos 1 usuário ativo por papel", superusuário
+                              e bloqueio de login por tentativas.
 
    npm run test:integration   A API de verdade contra o MySQL: login e
                               permissões por papel, organizações e contratos,
@@ -159,80 +185,18 @@ Os detalhes de cada etapa estão abaixo.
      - ATENÇÃO: o superusuário só gerencia contas (/usuarios). Para testar
        lotes, equipamentos e organizações, faça login com admin, operador
        ou gestor (clique em "Authorize" > "Logout" e entre de novo).
+     - Relatórios em CSV: em GET /relatorios/financeiro (ou outro
+       relatório / auditoria), preencha o campo "formato" com csv; o
+       arquivo baixado abre direto no Excel.
+     - Esqueceu a senha do superusuário? Com o .env configurado, rode no
+       terminal da pasta greencode-av2:
+           npm run superusuario:redefinir -- NovaSenha@123
      Ideal para: ver todas as rotas e o que cada uma recebe e devolve.
 
 ---------------------------------------------------------------------
- 8. O QUE FOI ACRESCENTADO ALÉM DO ENUNCIADO
+ 8. ONDE ESTÁ CADA COISA
 ---------------------------------------------------------------------
- O enunciado pede o essencial (cadastrar, consultar e avançar status). Um
- sistema de uso real também precisa corrigir erros, desfazer cadastros
- feitos por engano e não ficar "trancado". Foi acrescentado:
-
- CORRIGIR E EXCLUIR (sem perder o histórico)
-   - Lote: corrigir nota fiscal/transportadora/observações; excluir só
-     antes da triagem (leva os equipamentos junto).
-   - Equipamento: corrigir tipo/marca/modelo/ano/peso (o código de barras
-     nunca muda); excluir só antes da triagem.
-   - Organização: excluir só se nunca enviou lotes (senão, desativar);
-     remover contrato só sem lotes em aberto.
-   - Toda exclusão pede a versão do registro (evita apagar algo que mudou
-     enquanto você olhava) e fica registrada no journal, com o estado
-     anterior.
-
- RELATÓRIOS EM CSV
-   - Os relatórios (/relatorios/...) e a auditoria (/auditoria) aceitam
-     ?formato=csv e baixam um arquivo que abre direto no Excel. Exemplo,
-     no navegador, com o Swagger: GET /relatorios/financeiro, campo
-     "formato" = csv.
-
- PROTEÇÃO DO SISTEMA
-   - Sempre existe pelo menos 1 usuário ATIVO como administrador, 1 como
-     operador de cadastro e 1 como gestor de almoxarifado. Não dá para
-     desativar, excluir ou trocar o papel do último de cada um.
-   - Ninguém desativa, exclui ou troca o próprio papel.
-   - Quem já operou o sistema não é excluído (só desativado), para a
-     auditoria continuar mostrando quem fez o quê.
-   - Trocar o papel ou desativar um usuário vale na hora, mesmo que ele
-     ainda tenha um login aberto.
-   - 5 senhas erradas seguidas bloqueiam o login por 15 minutos.
-   - Só o SUPERUSUÁRIO (um único no sistema) cria, edita, desativa,
-     exclui e redefine a senha das contas. O administrador opera o
-     sistema, mas recebe "403" nas rotas /usuarios.
-   - O papel de superusuário não pode ser criado, dado a outra pessoa,
-     rebaixado, desativado nem excluído pela API.
-   - Cada usuário troca só a própria senha (/auth/alterar-senha) e o
-     próprio nome (/auth/perfil).
-   - O superusuário redefine a senha de outro usuário (isso também
-     libera um login bloqueado).
-   - Esqueceu a senha do superusuário? No computador do servidor, com o
-     .env configurado, rode:
-         npm run superusuario:redefinir -- NovaSenha@123
-
- Detalhes e justificativas: docs/ARQUITETURA.md (itens 4.12 e 4.13).
- Lista de todas as rotas: docs/API.md.
-
----------------------------------------------------------------------
- 9. PRODUÇÃO / ENTREGA (build)
----------------------------------------------------------------------
-        npm run build        (compila para a pasta dist/)
-        npm run db:deploy    (aplica as migrações sem criar novas)
-        npm start            (roda dist/server.js)
-
----------------------------------------------------------------------
- 10. PUBLICAR NO GITHUB
----------------------------------------------------------------------
- - NÃO suba: .env, node_modules, dist  (já estão no .gitignore)
- - SUBA: tudo o mais, inclusive prisma/migrations e .env.example
- - Antes de entregar, rode do zero:
-        npm run db:reset
-        npm run db:seed
-        npm test
-   e confira docs/CHECKLIST.md.
-
----------------------------------------------------------------------
- 11. ONDE ESTÁ CADA COISA
----------------------------------------------------------------------
- README.md                          (raiz) visão geral do projeto
+ README.md                          (raiz) apresentação do projeto
  docs/docs.md                       documentação técnica (no padrão da AV1)
  docs/ARQUITETURA.md                decisões, trade-offs, limites do monolito
  docs/API.md                        todas as rotas, papéis e erros
