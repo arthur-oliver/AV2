@@ -33,6 +33,11 @@ export function registrarTratamentoErros(app: FastifyInstance): void {
       }
     }
 
+    // Limite geral de requisições (@fastify/rate-limit)
+    if (error.statusCode === 429) {
+      return reply.status(429).send({ erro: 'MUITAS_REQUISICOES', mensagem: 'Muitas requisições em pouco tempo. Aguarde um instante e tente novamente.' });
+    }
+
     // 4) Erros 4xx do próprio Fastify (ex.: JSON malformado)
     if (error.statusCode && error.statusCode < 500) {
       return reply.status(error.statusCode).send({ erro: 'REQUISICAO_INVALIDA', mensagem: error.message });

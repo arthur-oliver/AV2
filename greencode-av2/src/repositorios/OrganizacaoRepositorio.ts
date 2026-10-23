@@ -1,5 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
+import type { Paginacao } from '../utils/paginacao';
 
 type Cliente = Prisma.TransactionClient;
 
@@ -13,13 +14,16 @@ export class OrganizacaoRepositorio {
     return tx.organizacao.findUnique({ where: { cnpj } });
   }
 
-  listar(filtro: { ativo?: boolean; busca?: string }) {
+  listar(filtro: { ativo?: boolean; busca?: string }, pag: Paginacao) {
     const where: Prisma.OrganizacaoWhereInput = {};
     if (filtro.ativo !== undefined) where.ativo = filtro.ativo;
     if (filtro.busca) {
       where.OR = [{ razaoSocial: { contains: filtro.busca } }, { cnpj: { contains: filtro.busca.replace(/\D/g, '') || '#' } }];
     }
-    return prisma.organizacao.findMany({ where, include: { contrato: true }, orderBy: { razaoSocial: 'asc' } });
+    return prisma.$transaction([
+      prisma.organizacao.findMany({ where, include: { contrato: true }, orderBy: { razaoSocial: 'asc' }, skip: pag.skip, take: pag.take }),
+      prisma.organizacao.count({ where })
+    ]);
   }
 
   criar(data: Prisma.OrganizacaoCreateInput, tx: Cliente = prisma) {

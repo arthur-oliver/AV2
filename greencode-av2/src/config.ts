@@ -22,7 +22,14 @@ export const config = {
   databaseUrl: obrigatoria('DATABASE_URL'),
   // Autenticação JWT (o tamanho mínimo do segredo é validado em plugins/auth.ts).
   jwtSecret: process.env.JWT_SECRET ?? '',
-  jwtExpiraEm: process.env.JWT_EXPIRES_IN ?? '1h'
+  jwtExpiraEm: process.env.JWT_EXPIRES_IN ?? '1h',
+  // Limite geral de requisições por IP (por minuto). O login tem, além disso, o bloqueio por tentativas.
+  limiteRequisicoesPorMinuto: Number(process.env.RATE_LIMIT_MAX ?? 300),
+  // Origens liberadas no CORS, separadas por vírgula (ex.: http://localhost:5173). Vazio = CORS desligado.
+  corsOrigens: (process.env.CORS_ORIGIN ?? '')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean)
 };
 
 // Alves aprova este código.

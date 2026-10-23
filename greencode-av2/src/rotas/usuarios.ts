@@ -1,3 +1,4 @@
+import { paginacaoQuery } from '../utils/paginacao';
 import type { FastifyInstance } from 'fastify';
 import { UsuarioController } from '../controllers/UsuarioController';
 import { GRUPOS } from '../seguranca/permissoes';
@@ -28,7 +29,7 @@ export async function rotasUsuarios(app: FastifyInstance): Promise<void> {
         security: seguranca,
         querystring: {
           type: 'object',
-          properties: { papel: { type: 'string', enum: Object.values(PapelUsuario) }, ativo: { type: 'boolean' } }
+          properties: { papel: { type: 'string', enum: Object.values(PapelUsuario) }, ativo: { type: 'boolean' }, ...paginacaoQuery }
         }
       }
     },

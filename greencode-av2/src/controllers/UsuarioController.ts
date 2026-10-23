@@ -1,3 +1,4 @@
+import { responderPagina } from '../utils/paginacao';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { UsuarioServico } from '../servicos/UsuarioServico';
 import type { PapelUsuario } from '../dominio/enums';
@@ -7,8 +8,8 @@ type ComId = { Params: { id: string } };
 export class UsuarioController {
   constructor(private readonly servico = new UsuarioServico()) {}
 
-  listar = async (req: FastifyRequest<{ Querystring: { papel?: PapelUsuario; ativo?: boolean } }>) =>
-    this.servico.listar({ papel: req.query.papel, ativo: req.query.ativo });
+  listar = async (req: FastifyRequest<{ Querystring: { papel?: PapelUsuario; ativo?: boolean; pagina?: number; limite?: number } }>, reply: FastifyReply) =>
+    responderPagina(reply, await this.servico.listar(req.query));
 
   buscar = async (req: FastifyRequest<ComId>) => this.servico.buscar(req.params.id);
 

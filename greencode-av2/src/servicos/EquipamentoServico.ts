@@ -5,6 +5,9 @@ import { ErroValidacao, NaoEncontrado, RegraNegocio } from '../erros/AppError';
 import { registrarJournal } from '../utils/auditoria';
 import { exigirAtualizacao } from '../utils/versao';
 import { validarMudancaEstadoFisico } from '../regras/estadoFisico';
+import { statusLoteDerivado } from '../regras/statusLote';
+import { lerPaginacao } from '../utils/paginacao';
+import type { Prisma } from '@prisma/client';
 import { transicoesPermitidas, validarTransicaoRastreamento } from '../regras/rastreamento';
 import { StatusLote, StatusRastreamento as Status } from '../dominio/enums';
 import type { EstadoFisico, StatusRastreamento, TipoEquipamento } from '../dominio/enums';
@@ -30,8 +33,25 @@ export class EquipamentoServico {
     private readonly lotes = new LoteRepositorio()
   ) {}
 
-  listar(f: { status?: StatusRastreamento; tipo?: TipoEquipamento; loteId?: string }) {
-    return this.repo.listar(f);
+  async listar(f: { status?: StatusRastreamento; tipo?: TipoEquipamento; loteId?: string; pagina?: number; limite?: number }) {
+    const pag = lerPaginacao(f);
+    const [itens, total] = await this.repo.listar({ status: f.status, tipo: f.tipo, loteId: f.loteId }, pag);
+    return { itens, total, pagina: pag.pagina, limite: pag.limite };
+  }
+
+  // O status do lote é derivado dos equipamentos: só muda quando TODOS têm o mesmo status (ver regras/statusLote.ts).
+  private async sincronizarStatusDoLote(tx: Prisma.TransactionClient, loteId: string, statusAtual: string, usuario: string) {
+    const novo = statusLoteDerivado(await this.repo.statusDoLote(loteId, tx));
+    if (!novo || novo === statusAtual) return;
+    await this.lotes.definirStatus(loteId, novo, tx);
+    await registrarJournal(tx, {
+      operacao: 'STATUS',
+      entidade: 'Lote',
+      entidadeId: loteId,
+      dadosAntes: { statusProcessamento: statusAtual },
+      dadosDepois: { statusProcessamento: novo, origem: 'derivado dos equipamentos' },
+      usuario
+    });
   }
 
   async buscar(id: string) {
@@ -69,6 +89,7 @@ export class EquipamentoServico {
         dadosDepois: { statusRastreamento: novo, justificativa },
         usuario
       });
+      await this.sincronizarStatusDoLote(tx, e.loteId, e.lote.statusProcessamento, usuario);
     });
     return this.buscar(id);
   }
@@ -161,6 +182,7 @@ export class EquipamentoServico {
         dadosAntes: { ...dados, movimentacoesRemovidas: movimentacoes },
         usuario
       });
+      await this.sincronizarStatusDoLote(tx, e.loteId, e.lote.statusProcessamento, usuario);
     });
   }
 }

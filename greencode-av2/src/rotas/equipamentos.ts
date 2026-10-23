@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { EquipamentoController } from '../controllers/EquipamentoController';
 import { GRUPOS } from '../seguranca/permissoes';
+import { paginacaoQuery } from '../utils/paginacao';
 import { EstadoFisico, StatusRastreamento, TipoEquipamento } from '../dominio/enums';
 
 const seguranca = [{ bearerAuth: [] }];
@@ -20,14 +21,15 @@ export async function rotasEquipamentos(app: FastifyInstance): Promise<void> {
       preHandler: leitura,
       schema: {
         tags: TAG,
-        summary: 'Lista equipamentos (filtros: status, tipo, loteId; máx. 500)',
+        summary: 'Lista equipamentos (filtros: status, tipo, loteId; paginação pagina/limite)',
         security: seguranca,
         querystring: {
           type: 'object',
           properties: {
             status: { type: 'string', enum: Object.values(StatusRastreamento) },
             tipo: { type: 'string', enum: Object.values(TipoEquipamento) },
-            loteId: { type: 'string', minLength: 36, maxLength: 36 }
+            loteId: { type: 'string', minLength: 36, maxLength: 36 },
+            ...paginacaoQuery
           }
         }
       }

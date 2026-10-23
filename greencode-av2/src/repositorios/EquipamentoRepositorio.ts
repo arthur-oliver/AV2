@@ -1,5 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
+import type { Paginacao } from '../utils/paginacao';
 
 type Cliente = Prisma.TransactionClient;
 
@@ -15,12 +16,21 @@ export class EquipamentoRepositorio {
     status?: Prisma.EquipamentoWhereInput['statusRastreamento'];
     tipo?: Prisma.EquipamentoWhereInput['tipo'];
     loteId?: string;
-  }) {
+  }, pag: Paginacao) {
     const where: Prisma.EquipamentoWhereInput = {};
     if (f.status) where.statusRastreamento = f.status;
     if (f.tipo) where.tipo = f.tipo;
     if (f.loteId) where.loteId = f.loteId;
-    return prisma.equipamento.findMany({ where, orderBy: [{ loteId: 'asc' }, { posicaoNoLote: 'asc' }], take: 500 });
+    return prisma.$transaction([
+      prisma.equipamento.findMany({ where, orderBy: [{ loteId: 'asc' }, { posicaoNoLote: 'asc' }], skip: pag.skip, take: pag.take }),
+      prisma.equipamento.count({ where })
+    ]);
+  }
+
+  // Status de rastreamento de todos os equipamentos do lote (base do status derivado do lote).
+  async statusDoLote(loteId: string, tx: Cliente = prisma) {
+    const r = await tx.equipamento.findMany({ where: { loteId }, select: { statusRastreamento: true } });
+    return r.map((e) => e.statusRastreamento);
   }
 
   async ultimaPosicao(loteId: string, tx: Cliente = prisma): Promise<number> {

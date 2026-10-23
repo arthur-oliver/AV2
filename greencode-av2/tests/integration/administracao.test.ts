@@ -243,9 +243,26 @@ describe('superusuário: único responsável pelas contas', () => {
     expect(promover.statusCode).toBe(400);
   });
 
-  it('o superusuário não opera lotes, equipamentos nem organizações (separação de funções)', async () => {
-    expect((await req(tokens.super, 'GET', '/lotes')).statusCode).toBe(403);
-    expect((await req(tokens.super, 'GET', '/organizacoes')).statusCode).toBe(403);
+  it('o superusuário tem o maior acesso: também opera organizações, lotes, equipamentos, relatórios e auditoria', async () => {
+    expect((await req(tokens.super, 'GET', '/lotes')).statusCode).toBe(200);
+    expect((await req(tokens.super, 'GET', '/organizacoes')).statusCode).toBe(200);
+    expect((await req(tokens.super, 'GET', '/equipamentos')).statusCode).toBe(200);
+    expect((await req(tokens.super, 'GET', '/auditoria')).statusCode).toBe(200);
+    expect((await req(tokens.super, 'GET', '/relatorios/financeiro')).statusCode).toBe(200);
+
+    const org = await req(tokens.super, 'POST', '/organizacoes', {
+      razaoSocial: `Super ${SUFIXO}`,
+      cnpj: gerarCnpjValido(),
+      contrato: { dataVencimento: '2099-12-31', clausulas: ['Teste'], valorMensal: 10 }
+    });
+    expect(org.statusCode).toBe(201);
+    const lote = await req(tokens.super, 'POST', '/lotes', {
+      organizacaoId: org.json().id,
+      notaFiscal: 'NF-SUPER',
+      transportadora: 'T',
+      equipamentos: [{ tipo: 'NOTEBOOK', anoFabricacao: 2020, pesoQuilogramas: 2 }]
+    });
+    expect(lote.statusCode).toBe(201);
   });
 
   it('o superusuário não redefine a própria senha por /usuarios (usa /auth/alterar-senha)', async () => {
@@ -643,6 +660,136 @@ describe('soft delete e exclusão em cadeia', () => {
     expect(await excluidos('Contrato', contratoId)).toBe(true);
     expect(await excluidos('Lote', lotes[0].id)).toBe(true);
     expect(await excluidos('Equipamento', lotes[1].eqIds[1])).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+describe('status do lote derivado dos equipamentos', () => {
+  async function loteComDoisEquipamentos(rotulo: string) {
+    const org = await req(tokens.operador, 'POST', '/organizacoes', {
+      razaoSocial: `${rotulo} ${SUFIXO}`,
+      cnpj: gerarCnpjValido(),
+      contrato: { dataVencimento: '2099-12-31', clausulas: ['Teste'], valorMensal: 10 }
+    });
+    const l = await req(tokens.gestor, 'POST', '/lotes', {
+      organizacaoId: org.json().id,
+      notaFiscal: `NF-${rotulo}`,
+      transportadora: 'T',
+      equipamentos: [
+        { tipo: 'NOTEBOOK', anoFabricacao: 2020, pesoQuilogramas: 2 },
+        { tipo: 'MONITOR', anoFabricacao: 2019, pesoQuilogramas: 3 }
+      ]
+    });
+    expect(l.statusCode).toBe(201);
+    const lote = l.json();
+    return { id: lote.id as string, versao: lote.versao as number, eq: (lote.equipamentos as { id: string }[]).map((e) => e.id) };
+  }
+
+  async function mudar(eqId: string, status: string) {
+    const e = await buscarEquipamento(eqId);
+    const r = await req(tokens.gestor, 'PATCH', `/equipamentos/${eqId}/status`, { status, justificativa: 'teste', versao: e.versao });
+    expect(r.statusCode).toBe(200);
+  }
+
+  it('o lote só muda de status quando todos os equipamentos têm o mesmo status', async () => {
+    const lote = await loteComDoisEquipamentos('Derivado');
+    expect((await req(tokens.gestor, 'POST', `/lotes/${lote.id}/triagem`, { versao: lote.versao })).statusCode).toBe(200);
+    expect((await buscarLote(lote.id)).statusProcessamento).toBe('TRIAGEM_CONCLUIDA');
+
+    // só o primeiro equipamento avança: status misturados, o lote não muda
+    await mudar(lote.eq[0], 'AGUARDANDO_DESMONTE');
+    expect((await buscarLote(lote.id)).statusProcessamento).toBe('TRIAGEM_CONCLUIDA');
+
+    // o segundo chega ao mesmo status: o lote passa a ENCAMINHADO
+    await mudar(lote.eq[1], 'AGUARDANDO_DESMONTE');
+    expect((await buscarLote(lote.id)).statusProcessamento).toBe('ENCAMINHADO');
+
+    // percorre o resto do caminho; o lote só finaliza quando os dois estiverem em BAIXA_DEFINITIVA
+    for (const eq of lote.eq) await mudar(eq, 'EM_DESMONTE');
+    await mudar(lote.eq[0], 'MATERIAL_RECICLAVEL');
+    await mudar(lote.eq[1], 'DESCARTE_SEGURO');
+    await mudar(lote.eq[0], 'BAIXA_DEFINITIVA');
+    expect((await buscarLote(lote.id)).statusProcessamento).toBe('ENCAMINHADO');
+    await mudar(lote.eq[1], 'BAIXA_DEFINITIVA');
+    expect((await buscarLote(lote.id)).statusProcessamento).toBe('FINALIZADO');
+
+    // a mudança de status do lote fica no journal
+    const journal = (await req(tokens.auditor, 'GET', `/auditoria?entidade=Lote&entidadeId=${lote.id}`)).json().registros as { operacao: string }[];
+    expect(journal.filter((j) => j.operacao === 'STATUS').length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('não existe mais rota para mudar o status do lote à mão', async () => {
+    const lote = await loteComDoisEquipamentos('SemRota');
+    expect((await req(tokens.gestor, 'PATCH', `/lotes/${lote.id}/status`, { status: 'ENCAMINHADO', versao: lote.versao })).statusCode).toBe(404);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+describe('paginação, relatórios e código de barras', () => {
+  it('as listagens aceitam ?pagina= e ?limite= e informam o total nos cabeçalhos', async () => {
+    const todos = await req(tokens.gestor, 'GET', '/equipamentos?limite=500');
+    const total = Number(todos.headers['x-total-count']);
+    expect(total).toBeGreaterThan(0);
+
+    const pagina = await req(tokens.gestor, 'GET', '/equipamentos?pagina=1&limite=2');
+    expect(pagina.statusCode).toBe(200);
+    expect((pagina.json() as unknown[]).length).toBeLessThanOrEqual(2);
+    expect(pagina.headers['x-total-count']).toBe(String(total));
+    expect(pagina.headers['x-limite']).toBe('2');
+
+    expect((await req(tokens.gestor, 'GET', '/equipamentos?limite=0')).statusCode).toBe(400);
+    expect((await req(tokens.gestor, 'GET', '/equipamentos?limite=9999')).statusCode).toBe(400);
+    expect((await req(tokens.operador, 'GET', '/organizacoes?pagina=1&limite=1')).statusCode).toBe(200);
+    expect((await req(tokens.gestor, 'GET', '/lotes?pagina=1&limite=1')).statusCode).toBe(200);
+    expect((await req(tokens.super, 'GET', '/usuarios?pagina=1&limite=1')).statusCode).toBe(200);
+  });
+
+  it('relatórios ignoram lotes inativos, a menos que ?incluirInativos=true', async () => {
+    const org = await req(tokens.operador, 'POST', '/organizacoes', {
+      razaoSocial: `Relatório ${SUFIXO}`,
+      cnpj: gerarCnpjValido(),
+      contrato: { dataVencimento: '2099-12-31', clausulas: ['Teste'], valorMensal: 10 }
+    });
+    const orgId = org.json().id as string;
+    const l = await req(tokens.gestor, 'POST', '/lotes', {
+      organizacaoId: orgId,
+      notaFiscal: 'NF-REL',
+      transportadora: 'T',
+      equipamentos: [{ tipo: 'NOTEBOOK', anoFabricacao: 2020, pesoQuilogramas: 2 }]
+    });
+    const lote = l.json() as { id: string; versao: number };
+
+    const antes = (await req(tokens.auditor, 'GET', `/relatorios/organizacao/${orgId}`)).json();
+    expect(antes.totalLotes).toBe(1);
+
+    expect((await req(tokens.gestor, 'PATCH', `/lotes/${lote.id}/ativo`, { ativo: false, versao: lote.versao })).statusCode).toBe(200);
+
+    const sem = (await req(tokens.auditor, 'GET', `/relatorios/organizacao/${orgId}`)).json();
+    expect(sem.totalLotes).toBe(0);
+    const com = (await req(tokens.auditor, 'GET', `/relatorios/organizacao/${orgId}?incluirInativos=true`)).json();
+    expect(com.totalLotes).toBe(1);
+
+    // o relatório por status segue a mesma regra
+    expect((await req(tokens.auditor, 'GET', '/relatorios/status/AGUARDANDO_TRIAGEM')).json().incluiInativos).toBe(false);
+    expect((await req(tokens.auditor, 'GET', '/relatorios/status/AGUARDANDO_TRIAGEM?incluirInativos=true')).json().incluiInativos).toBe(true);
+  });
+
+  it('o código de barras do equipamento é o próprio id e não pode ser informado', async () => {
+    const org = await req(tokens.operador, 'POST', '/organizacoes', {
+      razaoSocial: `Barras ${SUFIXO}`,
+      cnpj: gerarCnpjValido(),
+      contrato: { dataVencimento: '2099-12-31', clausulas: ['Teste'], valorMensal: 10 }
+    });
+    const l = await req(tokens.gestor, 'POST', '/lotes', {
+      organizacaoId: org.json().id,
+      notaFiscal: 'NF-BAR',
+      transportadora: 'T',
+      equipamentos: [{ codigoBarrasInterno: 'MEU-CODIGO', tipo: 'NOTEBOOK', anoFabricacao: 2020, pesoQuilogramas: 2 }]
+    });
+    expect(l.statusCode).toBe(201);
+    const e = l.json().equipamentos[0] as { id: string; codigoBarrasInterno: string };
+    expect(e.codigoBarrasInterno).toBe(e.id);
+    expect(e.codigoBarrasInterno).not.toBe('MEU-CODIGO');
   });
 });
 

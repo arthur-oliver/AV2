@@ -118,35 +118,45 @@ async function lotesEEquipamentos() {
     });
   }
 
-  // codigo, tipo, marca, modelo, ano, estado, peso, lote, posição, status
+  // tipo, marca, modelo, ano, estado, peso, lote, posição, status
+  // O código de barras do equipamento é o próprio id (gerado aqui com UUID fixo, só para o seed ser repetível).
   const equipamentos = [
-    ['GC-NOTE-000001', 'NOTEBOOK', 'Dell', 'Latitude 5400', 2018, 'USADO_MODERADO', '1.900', ID.lote1, 1, 'AGUARDANDO_DESMONTE'],
-    ['GC-COMP-000002', 'COMPUTADOR_MESA', 'HP', 'ProDesk 400', 2016, 'DANIFICADO_LEVE', '7.500', ID.lote1, 2, 'EM_DESMONTE'],
-    ['GC-MONI-000003', 'MONITOR', 'LG', '22MK430', 2019, 'BOM_ESTADO', '3.200', ID.lote1, 3, 'PECAS_REAPROVEITADAS'],
-    ['GC-SERV-000004', 'SERVIDOR', 'IBM', 'x3650', 2012, 'DANIFICADO_GRAVE', '22.000', ID.lote1, 4, 'DESCARTE_SEGURO'],
-    ['GC-IMPR-000005', 'IMPRESSORA', 'Epson', 'L3150', 2020, 'USADO_LEVE', '4.000', ID.lote2, 1, 'EM_TRIAGEM'],
-    ['GC-ROTE-000006', 'ROTEADOR', 'Cisco', 'RV340', 2017, 'USADO_MODERADO', '1.100', ID.lote2, 2, 'EM_TRIAGEM'],
-    ['GC-NOTE-000007', 'NOTEBOOK', 'Lenovo', 'ThinkPad T480', 2019, 'USADO_LEVE', '1.700', ID.lote3, 1, 'AGUARDANDO_TRIAGEM'],
-    ['GC-FONT-000008', 'FONTE_ALIMENTACAO', 'Corsair', 'CV550', 2015, 'INSERVIVEL', '1.300', ID.lote3, 2, 'AGUARDANDO_TRIAGEM']
+    ['NOTEBOOK', 'Dell', 'Latitude 5400', 2018, 'USADO_MODERADO', '1.900', ID.lote1, 1, 'AGUARDANDO_DESMONTE'],
+    ['COMPUTADOR_MESA', 'HP', 'ProDesk 400', 2016, 'DANIFICADO_LEVE', '7.500', ID.lote1, 2, 'EM_DESMONTE'],
+    ['MONITOR', 'LG', '22MK430', 2019, 'BOM_ESTADO', '3.200', ID.lote1, 3, 'PECAS_REAPROVEITADAS'],
+    ['SERVIDOR', 'IBM', 'x3650', 2012, 'DANIFICADO_GRAVE', '22.000', ID.lote1, 4, 'DESCARTE_SEGURO'],
+    ['IMPRESSORA', 'Epson', 'L3150', 2020, 'USADO_LEVE', '4.000', ID.lote2, 1, 'EM_TRIAGEM'],
+    ['ROTEADOR', 'Cisco', 'RV340', 2017, 'USADO_MODERADO', '1.100', ID.lote2, 2, 'EM_TRIAGEM'],
+    ['NOTEBOOK', 'Lenovo', 'ThinkPad T480', 2019, 'USADO_LEVE', '1.700', ID.lote3, 1, 'AGUARDANDO_TRIAGEM'],
+    ['FONTE_ALIMENTACAO', 'Corsair', 'CV550', 2015, 'INSERVIVEL', '1.300', ID.lote3, 2, 'AGUARDANDO_TRIAGEM']
   ] as const;
 
-  for (const [codigo, tipo, marca, modelo, ano, estado, peso, loteId, pos, status] of equipamentos) {
-    const e = await prisma.equipamento.upsert({
-      where: { codigoBarrasInterno: codigo },
-      update: {},
-      create: {
-        codigoBarrasInterno: codigo,
-        tipo,
-        marca,
-        modelo,
-        anoFabricacao: ano,
-        estadoFisico: estado,
-        pesoQuilogramas: peso,
-        loteId,
-        posicaoNoLote: pos,
-        statusRastreamento: status
-      }
-    });
+  for (const [indice, [tipo, marca, modelo, ano, estado, peso, loteId, pos, status]] of equipamentos.entries()) {
+    const idFixo = `00000000-0000-4000-8000-0000000000c${indice + 1}`;
+    // Idempotente: localiza pela posição no lote (e não pelo código), assim também funciona em bancos já populados.
+    const existente = await prisma.equipamento.findFirst({ where: { loteId, posicaoNoLote: pos } });
+    let e;
+    if (existente) {
+      e = existente.codigoBarrasInterno === existente.id
+        ? existente
+        : await prisma.equipamento.update({ where: { id: existente.id }, data: { codigoBarrasInterno: existente.id } });
+    } else {
+      e = await prisma.equipamento.create({
+        data: {
+          id: idFixo,
+          codigoBarrasInterno: idFixo,
+          tipo,
+          marca,
+          modelo,
+          anoFabricacao: ano,
+          estadoFisico: estado,
+          pesoQuilogramas: peso,
+          loteId,
+          posicaoNoLote: pos,
+          statusRastreamento: status
+        }
+      });
+    }
 
     // Histórico inicial: só cria se o equipamento ainda não tem movimentações.
     const jaTem = await prisma.movimentacao.count({ where: { equipamentoId: e.id } });

@@ -1,4 +1,5 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
+import { responderPagina } from '../utils/paginacao';
 import { OrganizacaoServico } from '../servicos/OrganizacaoServico';
 import type { DadosAtualizacao, DadosContrato, DadosOrganizacao } from '../servicos/OrganizacaoServico';
 
@@ -7,8 +8,8 @@ type ComId = { Params: { id: string } };
 export class OrganizacaoController {
   constructor(private readonly servico = new OrganizacaoServico()) {}
 
-  listar = async (req: FastifyRequest<{ Querystring: { ativo?: boolean; busca?: string } }>) =>
-    this.servico.listar({ ativo: req.query.ativo, busca: req.query.busca?.trim() || undefined });
+  listar = async (req: FastifyRequest<{ Querystring: { ativo?: boolean; busca?: string; pagina?: number; limite?: number } }>, reply: FastifyReply) =>
+    responderPagina(reply, await this.servico.listar({ ...req.query, busca: req.query.busca?.trim() || undefined }));
 
   buscar = async (req: FastifyRequest<ComId>) => this.servico.buscar(req.params.id);
 

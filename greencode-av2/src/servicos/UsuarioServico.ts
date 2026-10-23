@@ -1,3 +1,4 @@
+import { lerPaginacao } from '../utils/paginacao';
 import { prisma } from '../lib/prisma';
 import { UsuarioRepositorio } from '../repositorios/UsuarioRepositorio';
 import { gerarHashSenha } from '../seguranca/senha';
@@ -23,8 +24,10 @@ type Responsavel = { id: string; usuario: string };
 export class UsuarioServico {
   constructor(private readonly usuarios = new UsuarioRepositorio()) {}
 
-  listar(filtro: { papel?: PapelUsuario; ativo?: boolean } = {}) {
-    return this.usuarios.listar(filtro);
+  async listar(filtro: { papel?: PapelUsuario; ativo?: boolean; pagina?: number; limite?: number } = {}) {
+    const pag = lerPaginacao(filtro);
+    const [itens, total] = await this.usuarios.listar({ papel: filtro.papel, ativo: filtro.ativo }, pag);
+    return { itens, total, pagina: pag.pagina, limite: pag.limite };
   }
 
   async buscar(id: string) {

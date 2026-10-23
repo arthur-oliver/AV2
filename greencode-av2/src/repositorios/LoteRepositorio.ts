@@ -1,5 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
+import type { Paginacao } from '../utils/paginacao';
 
 type Cliente = Prisma.TransactionClient;
 
@@ -13,17 +14,22 @@ export class LoteRepositorio {
     });
   }
 
-  listar(f: { organizacaoId?: string; status?: Prisma.LoteWhereInput['statusProcessamento']; ativo?: boolean; inicio?: Date; fim?: Date }) {
+  listar(f: { organizacaoId?: string; status?: Prisma.LoteWhereInput['statusProcessamento']; ativo?: boolean; inicio?: Date; fim?: Date }, pag: Paginacao) {
     const where: Prisma.LoteWhereInput = {};
     if (f.organizacaoId) where.organizacaoId = f.organizacaoId;
     if (f.status) where.statusProcessamento = f.status;
     if (f.ativo !== undefined) where.ativo = f.ativo;
     if (f.inicio || f.fim) where.dataEntrada = { ...(f.inicio && { gte: f.inicio }), ...(f.fim && { lte: f.fim }) };
-    return prisma.lote.findMany({
-      where,
-      include: { _count: { select: { equipamentos: true } }, organizacao: orgResumo },
-      orderBy: { dataEntrada: 'desc' }
-    });
+    return prisma.$transaction([
+      prisma.lote.findMany({
+        where,
+        include: { _count: { select: { equipamentos: true } }, organizacao: orgResumo },
+        orderBy: { dataEntrada: 'desc' },
+        skip: pag.skip,
+        take: pag.take
+      }),
+      prisma.lote.count({ where })
+    ]);
   }
 
   criar(data: Prisma.LoteUncheckedCreateInput, tx: Cliente = prisma) {
@@ -34,6 +40,11 @@ export class LoteRepositorio {
   async atualizarComVersao(id: string, versao: number, data: Prisma.LoteUpdateManyMutationInput, tx: Cliente = prisma) {
     const r = await tx.lote.updateMany({ where: { id, versao }, data: { ...data, versao: { increment: 1 } } });
     return r.count;
+  }
+
+  // Grava o status derivado dos equipamentos (e incrementa a versão).
+  async definirStatus(id: string, status: Prisma.LoteUpdateManyMutationInput['statusProcessamento'], tx: Cliente = prisma) {
+    await tx.lote.update({ where: { id }, data: { statusProcessamento: status, versao: { increment: 1 } } });
   }
 
   // Incrementa a versão do lote (serializa operações simultâneas sobre o mesmo lote).

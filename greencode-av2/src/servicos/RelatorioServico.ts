@@ -8,13 +8,13 @@ const arred = (n: number, casas: number) => Math.round(n * 10 ** casas) / 10 ** 
 // Relatórios e consulta de auditoria (somente leitura).
 export class RelatorioServico {
   // Equivalente ao gerarRelatorioPorOrganizacao() da AV1.
-  async porOrganizacao(organizacaoId: string, inicio?: string, fim?: string) {
+  async porOrganizacao(organizacaoId: string, inicio?: string, fim?: string, incluirInativos = false) {
     const per = intervalo(inicio, fim);
     const org = await prisma.organizacao.findUnique({ where: { id: organizacaoId }, select: { id: true, razaoSocial: true, cnpj: true } });
     if (!org) throw new NaoEncontrado('Organização');
 
     const lotes = await prisma.lote.findMany({
-      where: { organizacaoId, dataEntrada: { gte: per.inicio, lte: per.fim } },
+      where: { organizacaoId, dataEntrada: { gte: per.inicio, lte: per.fim }, ...(incluirInativos ? {} : { ativo: true }) },
       include: { equipamentos: { select: { pesoQuilogramas: true, statusRastreamento: true } } },
       orderBy: { dataEntrada: 'asc' }
     });
@@ -33,6 +33,7 @@ export class RelatorioServico {
     return {
       organizacao: org,
       periodo: per,
+      incluiInativos: incluirInativos,
       totalLotes: lotes.length,
       totalEquipamentos,
       pesoTotalKg: arred(peso, 3),
@@ -48,14 +49,14 @@ export class RelatorioServico {
   }
 
   // Equivalente ao gerarRelatorioPorStatus() da AV1.
-  async porStatus(status: StatusRastreamento) {
+  async porStatus(status: StatusRastreamento, incluirInativos = false) {
     const equipamentos = await prisma.equipamento.findMany({
-      where: { statusRastreamento: status },
+      where: { statusRastreamento: status, ...(incluirInativos ? {} : { lote: { ativo: true } }) },
       include: { lote: { select: { id: true, notaFiscal: true, organizacaoId: true } } },
       orderBy: { atualizadoEm: 'desc' },
       take: 500
     });
-    return { status, total: equipamentos.length, equipamentos };
+    return { status, incluiInativos: incluirInativos, total: equipamentos.length, equipamentos };
   }
 
   // Contratos vigentes em algum momento do período (assinados até o fim e que vencem depois do início).

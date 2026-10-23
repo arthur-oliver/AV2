@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { LoteController } from '../controllers/LoteController';
 import { GRUPOS } from '../seguranca/permissoes';
 import { EstadoFisico, StatusLote, TipoEquipamento } from '../dominio/enums';
+import { paginacaoQuery } from '../utils/paginacao';
 
 const seguranca = [{ bearerAuth: [] }];
 const TAG = ['Lotes'];
@@ -13,7 +14,6 @@ export const itemEquipamento = {
   type: 'object',
   required: ['tipo', 'anoFabricacao', 'pesoQuilogramas'],
   properties: {
-    codigoBarrasInterno: { type: 'string', minLength: 3, maxLength: 40 },
     tipo: { type: 'string', enum: Object.values(TipoEquipamento) },
     marca: { type: 'string', maxLength: 80 },
     modelo: { type: 'string', maxLength: 80 },
@@ -43,7 +43,8 @@ export async function rotasLotes(app: FastifyInstance): Promise<void> {
             status: { type: 'string', enum: Object.values(StatusLote) },
             ativo: { type: 'boolean' },
             inicio: { type: 'string', maxLength: 30 },
-            fim: { type: 'string', maxLength: 30 }
+            fim: { type: 'string', maxLength: 30 },
+            ...paginacaoQuery
           }
         }
       }
@@ -97,24 +98,9 @@ export async function rotasLotes(app: FastifyInstance): Promise<void> {
     '/lotes/:id/triagem',
     {
       preHandler: escrita,
-      schema: { tags: TAG, summary: 'Processa a triagem do lote', security: seguranca, params: idParam, body: { type: 'object', required: ['versao'], properties: { versao } } }
+      schema: { tags: TAG, summary: 'Processa a triagem: equipamentos vão a EM_TRIAGEM e o lote a TRIAGEM_CONCLUIDA. Depois disso o status do lote é derivado dos equipamentos', security: seguranca, params: idParam, body: { type: 'object', required: ['versao'], properties: { versao } } }
     },
     c.processarTriagem as never
-  );
-
-  app.patch(
-    '/lotes/:id/status',
-    {
-      preHandler: escrita,
-      schema: {
-        tags: TAG,
-        summary: 'Avança o lote: TRIAGEM_CONCLUIDA -> ENCAMINHADO -> FINALIZADO',
-        security: seguranca,
-        params: idParam,
-        body: { type: 'object', required: ['status', 'versao'], properties: { status: { type: 'string', enum: [StatusLote.ENCAMINHADO, StatusLote.FINALIZADO] }, versao } }
-      }
-    },
-    c.avancarStatus as never
   );
 
   app.patch(

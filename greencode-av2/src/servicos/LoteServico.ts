@@ -7,13 +7,13 @@ import { ValidadorDataEntrada } from '../validadores/ValidadorDataEntrada';
 import { ErroValidacao, NaoEncontrado, RegraNegocio } from '../erros/AppError';
 import { registrarJournal } from '../utils/auditoria';
 import { exigirAtualizacao } from '../utils/versao';
-import { gerarCodigoBarras } from '../utils/codigoBarras';
+import { randomUUID } from 'crypto';
+import { lerPaginacao } from '../utils/paginacao';
 import { intervalo, lerData } from '../utils/datas';
 import { EstadoFisico, StatusLote, StatusRastreamento } from '../dominio/enums';
 import type { EstadoFisico as TEstado, StatusLote as TStatusLote, TipoEquipamento } from '../dominio/enums';
 
 export interface NovoEquipamento {
-  codigoBarrasInterno?: string;
   tipo: TipoEquipamento;
   marca?: string;
   modelo?: string;
@@ -37,12 +37,6 @@ export interface DadosEdicaoLote {
   observacoes?: string;
   dataEntrada?: string;
 }
-
-// Ordem permitida depois da triagem: TRIAGEM_CONCLUIDA -> ENCAMINHADO -> FINALIZADO
-const PROXIMO_STATUS: Record<string, TStatusLote | undefined> = {
-  [StatusLote.TRIAGEM_CONCLUIDA]: StatusLote.ENCAMINHADO,
-  [StatusLote.ENCAMINHADO]: StatusLote.FINALIZADO
-};
 
 function validarItens(itens: NovoEquipamento[]): void {
   const anoMax = new Date().getFullYear() + 1;
@@ -75,9 +69,11 @@ export class LoteServico {
     private readonly validadorData = new ValidadorDataEntrada()
   ) {}
 
-  async listar(f: { organizacaoId?: string; status?: TStatusLote; ativo?: boolean; inicio?: string; fim?: string }) {
+  async listar(f: { organizacaoId?: string; status?: TStatusLote; ativo?: boolean; inicio?: string; fim?: string; pagina?: number; limite?: number }) {
     const per = f.inicio || f.fim ? intervalo(f.inicio, f.fim) : undefined;
-    return this.lotes.listar({ organizacaoId: f.organizacaoId, status: f.status, ativo: f.ativo, inicio: per?.inicio, fim: per?.fim });
+    const pag = lerPaginacao(f);
+    const [itens, total] = await this.lotes.listar({ organizacaoId: f.organizacaoId, status: f.status, ativo: f.ativo, inicio: per?.inicio, fim: per?.fim }, pag);
+    return { itens, total, pagina: pag.pagina, limite: pag.limite };
   }
 
   async buscar(id: string) {
@@ -191,31 +187,6 @@ export class LoteServico {
     return this.buscar(loteId);
   }
 
-  async avancarStatus(loteId: string, novo: TStatusLote, versao: number, usuario: string) {
-    await prisma.$transaction(async (tx) => {
-      const lote = await this.lotes.buscarPorId(loteId, tx);
-      if (!lote) throw new NaoEncontrado('Lote');
-      exigirAtivo(lote);
-
-      if (PROXIMO_STATUS[lote.statusProcessamento] !== novo) {
-        throw new RegraNegocio(`Transição inválida: ${lote.statusProcessamento} -> ${novo}.`);
-      }
-      if (novo === StatusLote.FINALIZADO && (await this.equipamentos.equipamentosNaoBaixados(loteId, tx)) > 0) {
-        throw new RegraNegocio('Para finalizar o lote, todos os equipamentos devem estar em BAIXA_DEFINITIVA.');
-      }
-      exigirAtualizacao(await this.lotes.atualizarComVersao(loteId, versao, { statusProcessamento: novo }, tx), true, 'Lote');
-      await registrarJournal(tx, {
-        operacao: 'STATUS',
-        entidade: 'Lote',
-        entidadeId: loteId,
-        dadosAntes: { statusProcessamento: lote.statusProcessamento },
-        dadosDepois: { statusProcessamento: novo },
-        usuario
-      });
-    });
-    return this.buscar(loteId);
-  }
-
   // Soft delete: inativa o lote (ele continua no banco, só deixa de aceitar alterações) ou o reativa.
   // Ao inativar, os equipamentos do lote passam a ser tratados como inativos (ficam bloqueados para alteração).
   async alterarAtivo(loteId: string, ativo: boolean, versao: number, usuario: string) {
@@ -304,11 +275,14 @@ export class LoteServico {
     let pos = ultimaPosicao;
     for (const e of itens) {
       pos += 1;
+      // O código de barras do equipamento é o próprio id da tabela.
+      const id = randomUUID();
       const eq = await this.equipamentos.criar(
         {
+          id,
           loteId,
           posicaoNoLote: pos,
-          codigoBarrasInterno: e.codigoBarrasInterno?.trim() || gerarCodigoBarras(e.tipo),
+          codigoBarrasInterno: id,
           tipo: e.tipo,
           marca: e.marca ?? '',
           modelo: e.modelo ?? '',

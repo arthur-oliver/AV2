@@ -1,4 +1,7 @@
 import Fastify, { FastifyInstance } from 'fastify';
+import helmet from '@fastify/helmet';
+import cors from '@fastify/cors';
+import rateLimit from '@fastify/rate-limit';
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
 import { config } from './config';
@@ -21,6 +24,20 @@ export async function construirApp(): Promise<FastifyInstance> {
   app.addHook('onClose', async () => {
     await prisma.$disconnect();
   });
+
+  // Cabeçalhos de segurança (helmet). A política de conteúdo (CSP) fica desligada porque a interface /docs usa scripts próprios.
+  await app.register(helmet, { contentSecurityPolicy: false });
+
+  // CORS: só as origens listadas em CORS_ORIGIN. Sem a variável, nenhuma origem externa é liberada.
+  await app.register(cors, { origin: config.corsOrigens.length > 0 ? config.corsOrigens : false, exposedHeaders: ['X-Total-Count', 'X-Pagina', 'X-Limite'] });
+
+  // Limite geral de requisições por IP (429 ao exceder). Desligado nos testes automatizados.
+  if (config.ambiente !== 'test') {
+    await app.register(rateLimit, {
+      max: config.limiteRequisicoesPorMinuto,
+      timeWindow: '1 minute'
+    });
+  }
 
   // Documentação automática da API (gerada a partir dos schemas das rotas).
   // Precisa ser registrada ANTES das rotas. Interface em: /docs

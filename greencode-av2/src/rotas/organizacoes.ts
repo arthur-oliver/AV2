@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { OrganizacaoController } from '../controllers/OrganizacaoController';
+import { paginacaoQuery } from '../utils/paginacao';
 import { GRUPOS } from '../seguranca/permissoes';
 
 const seguranca = [{ bearerAuth: [] }];
@@ -43,7 +44,7 @@ export async function rotasOrganizacoes(app: FastifyInstance): Promise<void> {
         tags: TAG,
         summary: 'Lista organizações (filtros: ativo, busca por razão social/CNPJ)',
         security: seguranca,
-        querystring: { type: 'object', properties: { ativo: { type: 'boolean' }, busca: { type: 'string', maxLength: 100 } } }
+        querystring: { type: 'object', properties: { ativo: { type: 'boolean' }, busca: { type: 'string', maxLength: 100 }, ...paginacaoQuery } }
       }
     },
     c.listar as never

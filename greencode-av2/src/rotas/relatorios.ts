@@ -12,6 +12,10 @@ const formato = {
   formato: { type: 'string', enum: ['json', 'csv'], description: 'json (padrão) ou csv (arquivo para o Excel)' }
 };
 
+const incluirInativos = {
+  incluirInativos: { type: 'boolean', description: 'false (padrão): ignora lotes inativos (soft delete). true: inclui' }
+};
+
 export async function rotasRelatorios(app: FastifyInstance): Promise<void> {
   const c = new RelatorioController();
   const leitura = app.autorizar(...GRUPOS.LEITURA);
@@ -26,7 +30,7 @@ export async function rotasRelatorios(app: FastifyInstance): Promise<void> {
         summary: 'Lotes, equipamentos e peso de uma organização no período (?formato=csv baixa em CSV)',
         security: seguranca,
         params: { type: 'object', required: ['id'], properties: { id: { type: 'string', minLength: 36, maxLength: 36 } } },
-        querystring: { type: 'object', properties: { ...periodo, ...formato } }
+        querystring: { type: 'object', properties: { ...periodo, ...formato, ...incluirInativos } }
       }
     },
     c.porOrganizacao as never
@@ -41,7 +45,7 @@ export async function rotasRelatorios(app: FastifyInstance): Promise<void> {
         summary: 'Equipamentos em um determinado status de rastreamento',
         security: seguranca,
         params: { type: 'object', required: ['status'], properties: { status: { type: 'string', enum: Object.values(StatusRastreamento) } } },
-        querystring: { type: 'object', properties: formato }
+        querystring: { type: 'object', properties: { ...formato, ...incluirInativos } }
       }
     },
     c.porStatus as never

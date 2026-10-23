@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
+import type { Paginacao } from '../utils/paginacao';
 import type { PapelUsuario } from '../dominio/enums';
 
 type Cliente = Prisma.TransactionClient;
@@ -31,11 +32,14 @@ export class UsuarioRepositorio {
     return tx.usuario.findUnique({ where: { id }, select: usuarioPublico });
   }
 
-  listar(filtro: { papel?: PapelUsuario; ativo?: boolean } = {}) {
+  listar(filtro: { papel?: PapelUsuario; ativo?: boolean }, pag: Paginacao) {
     const where: Prisma.UsuarioWhereInput = {};
     if (filtro.papel) where.papel = filtro.papel;
     if (filtro.ativo !== undefined) where.ativo = filtro.ativo;
-    return prisma.usuario.findMany({ where, select: usuarioPublico, orderBy: { usuario: 'asc' } });
+    return prisma.$transaction([
+      prisma.usuario.findMany({ where, select: usuarioPublico, orderBy: { usuario: 'asc' }, skip: pag.skip, take: pag.take }),
+      prisma.usuario.count({ where })
+    ]);
   }
 
   criar(dados: Prisma.UsuarioCreateInput, tx: Cliente = prisma) {

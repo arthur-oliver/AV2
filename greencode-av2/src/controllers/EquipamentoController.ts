@@ -1,4 +1,5 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
+import { responderPagina } from '../utils/paginacao';
 import { EquipamentoServico } from '../servicos/EquipamentoServico';
 import type { DadosEdicaoEquipamento } from '../servicos/EquipamentoServico';
 import type { EstadoFisico, StatusRastreamento, TipoEquipamento } from '../dominio/enums';
@@ -8,8 +9,10 @@ type ComId = { Params: { id: string } };
 export class EquipamentoController {
   constructor(private readonly servico = new EquipamentoServico()) {}
 
-  listar = async (req: FastifyRequest<{ Querystring: { status?: StatusRastreamento; tipo?: TipoEquipamento; loteId?: string } }>) =>
-    this.servico.listar(req.query);
+  listar = async (
+    req: FastifyRequest<{ Querystring: { status?: StatusRastreamento; tipo?: TipoEquipamento; loteId?: string; pagina?: number; limite?: number } }>,
+    reply: FastifyReply
+  ) => responderPagina(reply, await this.servico.listar(req.query));
 
   buscar = async (req: FastifyRequest<ComId>) => this.servico.buscar(req.params.id);
 

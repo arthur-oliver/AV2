@@ -113,7 +113,8 @@ describe('lotes e equipamentos', () => {
     expect(lote.equipamentos).toHaveLength(2);
     expect(lote.equipamentos.map((e: any) => e.posicaoNoLote)).toEqual([1, 2]);
     expect(lote.resumo.pesoTotalKg).toBe(4.5);
-    expect(lote.equipamentos[0].codigoBarrasInterno).toMatch(/^GC-NOTE-/);
+    // o código de barras do equipamento é o próprio id da tabela
+    expect(lote.equipamentos[0].codigoBarrasInterno).toBe(lote.equipamentos[0].id);
   });
 
   it('valida a data de entrada do lote', async () => {

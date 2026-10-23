@@ -4,6 +4,7 @@ import { LoteRepositorio } from '../repositorios/LoteRepositorio';
 import { EquipamentoRepositorio } from '../repositorios/EquipamentoRepositorio';
 import { ValidadorCNPJ, somenteDigitos } from '../validadores/ValidadorCNPJ';
 import { Conflito, ErroValidacao, NaoEncontrado, RegraNegocio } from '../erros/AppError';
+import { lerPaginacao } from '../utils/paginacao';
 import { registrarJournal } from '../utils/auditoria';
 import { exigirAtualizacao } from '../utils/versao';
 
@@ -61,8 +62,10 @@ export class OrganizacaoServico {
     private readonly validadorCnpj = new ValidadorCNPJ()
   ) {}
 
-  async listar(filtro: { ativo?: boolean; busca?: string }) {
-    return (await this.repo.listar(filtro)).map(comVigencia);
+  async listar(filtro: { ativo?: boolean; busca?: string; pagina?: number; limite?: number }) {
+    const pag = lerPaginacao(filtro);
+    const [itens, total] = await this.repo.listar({ ativo: filtro.ativo, busca: filtro.busca }, pag);
+    return { itens: itens.map(comVigencia), total, pagina: pag.pagina, limite: pag.limite };
   }
 
   async buscar(id: string) {
