@@ -21,7 +21,7 @@ Baseado no texto do enunciado da AV2 (que é narrativo e não traz lista numerad
 | 15 | Versionamento otimista (campo `versao`) | `src/utils/versao.ts` + repositórios | ✅ |
 | 16 | Script de seed com massa representativa | `prisma/seed.ts` (`npm run db:seed`) | ✅ |
 | 17 | Seed cobre estados variados e os cenários de validação da AV1 | 8 equipamentos em status/estados diferentes, org sem contrato | ✅ |
-| 18 | Unicidade no banco: CNPJ e codigoBarrasInterno | `@unique` no `schema.prisma` | ✅ |
+| 18 | Unicidade no banco: CNPJ e código de barras (igual ao id do equipamento) | `@unique` no `schema.prisma` | ✅ |
 | 19 | Constraints/triggers para impedir estados inconsistentes | `prisma/sql/constraints.sql` (CHECK), `triggers-opcional.sql` | ⚠️ aplicar conforme o README |
 | 20 | Regras da AV1 preservadas (CNPJ, data 90 dias, desmonte após triagem, justificativa) | `src/validadores`, `src/regras` + testes | ✅ |
 | 21 | API documentada | `/docs` (Swagger) e `docs/API.md` | ✅ |
@@ -31,9 +31,10 @@ Baseado no texto do enunciado da AV2 (que é narrativo e não traz lista numerad
 | 25 | Testes | `tests/unit` (sem banco) e `tests/integration` (API + MySQL) | ✅ |
 | 26 | *(extra)* Corrigir, inativar (soft delete) e excluir em cadeia organizações e lotes; excluir equipamentos, contratos e usuários, com tudo no journal | `PUT`/`DELETE` nas rotas; `docs/ARQUITETURA.md` (4.9) | ✅ |
 | 27 | *(extra)* Sempre ao menos 1 usuário ativo em cada papel essencial; sem autoexclusão | `src/regras/usuarios.ts`, `UsuarioServico` (4.10) | ✅ |
-| 28 | *(extra)* Superusuário único, dono das contas de usuário; cada usuário altera só a própria senha e o próprio nome; script de recuperação | `src/regras/usuarios.ts`, `UsuarioServico`, `prisma/redefinir-superusuario.ts` | ✅ |
+| 28 | *(extra)* Superusuário único, de maior acesso e dono exclusivo das contas de usuário; cada usuário altera só a própria senha e o próprio nome; script de recuperação | `src/regras/usuarios.ts`, `UsuarioServico`, `prisma/redefinir-superusuario.ts` | ✅ |
 | 29 | *(extra)* Papel conferido no banco a cada requisição; bloqueio de login por tentativas; redefinição de senha | `plugins/auth.ts`, `seguranca/tentativasLogin.ts` | ✅ |
 | 30 | *(extra)* Exportação dos relatórios e da auditoria em CSV (`?formato=csv`) | `utils/csv.ts`, `servicos/RelatorioCsv.ts` | ✅ |
+| 31 | *(extra)* Status do lote derivado dos equipamentos; paginação; relatórios sem lotes inativos; helmet, CORS e rate limit | `src/regras/statusLote.ts`, `src/utils/paginacao.ts`, `src/app.ts` | ✅ |
 
 ## Antes de entregar
 

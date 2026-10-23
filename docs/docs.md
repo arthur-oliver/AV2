@@ -145,6 +145,8 @@ Entre as principais validações estão:
 * lote só pode ser finalizado quando todos os equipamentos tiverem baixa definitiva;
 * operações que dependem de uma organização, lote ou equipamento existente devem rejeitar identificadores inexistentes;
 * toda alteração ou exclusão exige a `versao` lida (versionamento otimista);
+* o status do lote é derivado dos equipamentos: só muda quando todos têm o mesmo status (não há rota manual);
+* o código de barras do equipamento é o próprio `id` da tabela;
 * a data de entrada do lote só é corrigida antes da triagem e continua obedecendo à regra dos 90 dias;
 * soft delete: inativar uma organização inativa em cadeia seus lotes e equipamentos (sem restrição por contrato); inativar um lote o deixa só para consulta;
 * exclusão em cadeia: excluir uma organização remove contrato, lotes, equipamentos e movimentações; excluir um lote remove seus equipamentos; equipamento e contrato só têm exclusão definitiva;
@@ -193,7 +195,7 @@ O sistema mantém os quatro papéis da AV1 e acrescenta o **superusuário**:
 
 | Papel                   | Responsabilidade                                    |
 | ----------------------- | --------------------------------------------------- |
-| **SUPERUSUARIO**        | Único; gerencia as contas de usuário (não opera lotes, equipamentos nem organizações) |
+| **SUPERUSUARIO**        | Único; maior nível de acesso: gerencia as contas de usuário (com exclusividade) e executa qualquer função dos demais papéis |
 | **ADMINISTRADOR**       | Gestão global da operação, sem gerir contas de usuário |
 | **OPERADOR_CADASTRO**   | Organizações e contratos                            |
 | **GESTOR_ALMOXARIFADO** | Lotes, triagem e equipamentos                       |
@@ -304,7 +306,7 @@ O monólito simplifica a implantação e permite transações entre lote, equipa
 
 Para uma versão de produção, são previstas as seguintes evoluções:
 
-* limitação de tentativas de login (rate limiting);
+* limitação de requisições por usuário e armazenamento compartilhado (Redis) para o rate limiting, que hoje é por IP e em memória;
 * refresh tokens e lista de revogação;
 * HTTPS por meio de proxy reverso;
 * criptografia dos dados em repouso no banco;

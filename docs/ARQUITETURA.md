@@ -103,8 +103,18 @@ administração do banco (nenhuma rotina apaga registros); triggers opcionais im
 ### 4.7 Autorização por papel
 Os 4 papéis da AV1 foram mantidos (matriz em `src/seguranca/permissoes.ts`). A checagem fica no `preHandler` da
 rota, antes de qualquer lógica: o auditor só lê; operador cadastra organizações/contratos; gestor cuida de lotes e
-equipamentos; administrador faz tudo na operação; o superusuário (único) é o dono das contas de acesso e não opera lotes,
-equipamentos nem organizações (separação de funções).
+equipamentos; administrador faz tudo na operação; o superusuário (único) tem o maior acesso: é o dono exclusivo das contas de
+acesso e também executa qualquer função dos demais papéis.
+
+**Status do lote derivado.** O lote não tem rota de mudança manual: a cada mudança de status (ou exclusão) de um
+equipamento, a mesma transação recalcula o lote (`src/regras/statusLote.ts`). Ele só muda quando todos os equipamentos
+têm o mesmo status; com status misturados fica como está. A mudança é gravada no journal como `STATUS` do lote.
+
+**Código de barras = id.** O identificador do equipamento (UUID gerado pelo sistema) é também o código de barras,
+então não existe um segundo código para manter sincronizado.
+
+**Superusuário com acesso total.** O superusuário está em todos os grupos de permissão; o grupo exclusivo dele
+(`SOMENTE_SUPERUSUARIO`) continua valendo só para `/usuarios`.
 
 ### 4.8 Validação em três camadas
 1. **JSON Schema** nas rotas: tipos, tamanhos, enums, formatos (rejeita lixo antes de chegar ao service).
@@ -120,7 +130,7 @@ um erro de digitação** e **desfazer um cadastro feito por engano**. A regra ad
 |---|---|---|---|
 | Organização | dados cadastrais | sim: inativa em cadeia todos os lotes e equipamentos; sem restrição por contrato ou lotes em aberto | sim, em cadeia: contrato, lotes, equipamentos e movimentações |
 | Lote | nota fiscal, transportadora, observações; data de entrada só antes da triagem (regra dos 90 dias continua valendo) | sim: o lote e seus equipamentos ficam só para consulta | sim, em qualquer status, levando equipamentos e movimentações |
-| Equipamento | tipo, marca, modelo, ano, peso (nunca o código de barras); status e estado físico têm rotas próprias, com justificativa | não (é tratado como inativo quando o lote está inativo) | sim, em qualquer fase |
+| Equipamento | tipo, marca, modelo, ano, peso (nunca o código de barras, que é o próprio id); status e estado físico têm rotas próprias, com justificativa | não (é tratado como inativo quando o lote está inativo) | sim, em qualquer fase |
 | Contrato | substituir/renovar | não | sim; sem contrato ativo a organização deixa de receber novos lotes |
 | Usuário | papel; senha (redefinida pelo superusuário); nome | desativar | só sem histórico; senão, desativar |
 
@@ -159,7 +169,7 @@ no journal — o dado some da tabela, mas **a exclusão continua auditável**.
 - **Bloqueio por tentativas.** 5 senhas erradas seguidas para o mesmo login bloqueiam novas tentativas por 15 minutos
   (HTTP 429). Os contadores ficam em memória (simples, sem tabela nova); reiniciar o servidor zera os bloqueios.
   O superusuário também libera o login ao redefinir a senha. **Custo:** um atacante pode travar o login de outra pessoa
-  de propósito; em produção, combinar com limite por IP (rate limiting) e armazenamento compartilhado (Redis).
+  de propósito; o limite geral de requisições por IP ajuda a conter isso; em produção, usar armazenamento compartilhado (Redis).
 
 ### 4.11 Exportação dos relatórios em CSV
 Os relatórios e a auditoria aceitam `?formato=csv`. **Decisão:** o mesmo endpoint serve JSON ou CSV, em vez de rotas
@@ -173,6 +183,7 @@ BOM UTF-8, porque é o que o Excel em português abre sem assistente de importa�
 - Senhas com bcrypt; nunca retornadas pela API (`select` explícito).
 - JWT assinado (`JWT_SECRET` ≥ 32 caracteres, validado na inicialização); segredos só em `.env` (fora do Git).
 - Consultas parametrizadas pelo Prisma (sem concatenação de SQL).
+- Cabeçalhos de segurança (`@fastify/helmet`), CORS restrito às origens de `CORS_ORIGIN` e limite geral de requisições por IP (`@fastify/rate-limit`, 429).
 - Erros internos não vazam detalhes (resposta genérica 500; detalhe só no log).
 - Autorização por papel em todas as rotas protegidas; contas podem ser desativadas; o papel é conferido no banco a cada requisição.
 - Bloqueio temporário do login após 5 falhas seguidas (429) e redefinição de senha pelo superusuário.
@@ -195,5 +206,5 @@ o Prisma baixa o binário correto do sistema operacional na instalação. Variá
 
 ## 8. Evoluções futuras
 
-Front-end SPA consumindo esta API; refresh tokens; rate limiting por IP; paginação nas listagens e relatórios extensos; CI com testes;
+Front-end SPA consumindo esta API; refresh tokens; CI com testes;
 imagem Docker da aplicação; exportação de relatórios em PDF (o CSV já existe); certificados de compensação ambiental.

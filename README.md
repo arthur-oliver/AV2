@@ -12,7 +12,7 @@ API REST em Node.js e TypeScript para apoiar a **logística reversa de resíduos
 | --- | --- |
 | Organizações e contratos | Cadastro com validação de CNPJ (sem duplicidade), contrato com vigência, cláusulas e valor mensal, correção e exclusão controladas |
 | Lotes | Recebimento com nota fiscal e transportadora, data de entrada validada (nunca futura, no máximo 90 dias atrás), triagem e finalização |
-| Equipamentos | Tipo, marca, modelo, ano e peso, código de barras gerado pelo sistema, estado físico e status de rastreamento |
+| Equipamentos | Tipo, marca, modelo, ano e peso, código de barras igual ao id do equipamento, estado físico e status de rastreamento |
 | Rastreabilidade | Cada mudança de status ou de estado físico vira uma movimentação, com responsável e justificativa |
 | Relatórios e auditoria | Resumos por organização, por status e financeiro, com exportação em CSV (abre no Excel); consulta ao journal de tudo que foi criado, alterado ou excluído |
 | Contas e acesso | Login com JWT, cinco papéis com permissões distintas e gestão de contas feita por um superusuário único |
@@ -21,7 +21,7 @@ API REST em Node.js e TypeScript para apoiar a **logística reversa de resíduos
 
 | Papel | Responsabilidade |
 | --- | --- |
-| `SUPERUSUARIO` | Único no sistema; gerencia as contas de usuário (não opera lotes nem organizações) |
+| `SUPERUSUARIO` | Único no sistema; maior nível de acesso: gerencia as contas de usuário (com exclusividade) e executa qualquer função dos demais papéis |
 | `ADMINISTRADOR` | Acesso total à operação, sem gerir contas |
 | `OPERADOR_CADASTRO` | Organizações e contratos |
 | `GESTOR_ALMOXARIFADO` | Lotes, triagem, equipamentos e movimentações |
@@ -32,6 +32,9 @@ API REST em Node.js e TypeScript para apoiar a **logística reversa de resíduos
 * **Sem atualizações perdidas:** versionamento otimista; alterar ou excluir exige a `versao` lida, e uma versão antiga responde 409.
 * **Tudo ou nada:** cada operação roda em transação junto com o registro de auditoria.
 * **Soft delete e exclusão em cadeia:** organização e lote podem ser inativados (os dados ficam no banco) ou excluídos de vez; a ação desce em cadeia para lotes, equipamentos e movimentações, numa transação e com tudo no journal. Lote só nasce em organização com contrato ativo. Usuário com histórico apenas é desativado.
+* **Status do lote derivado:** o lote só muda de status quando todos os equipamentos têm o mesmo status (recebido, triagem concluída, encaminhado, finalizado).
+* **Listagens paginadas e relatórios limpos:** `?pagina=&limite=` com o total nos cabeçalhos; relatórios ignoram lotes inativos (a menos que `?incluirInativos=true`).
+* **Proteção da API:** cabeçalhos de segurança (helmet), CORS por lista de origens e limite geral de requisições por IP, além do bloqueio de login por tentativas.
 * **Sistema nunca sem responsáveis:** sempre existe ao menos um usuário ativo nos papéis essenciais, ninguém desativa ou exclui a si mesmo, e o papel de superusuário não pode ser criado, atribuído nem removido pela API.
 * **Acesso protegido:** senhas com bcrypt, papel conferido no banco a cada requisição e bloqueio do login por 15 minutos após 5 senhas erradas.
 

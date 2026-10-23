@@ -27,11 +27,19 @@ Documentação interativa (Swagger): `http://127.0.0.1:3000/docs`.
 | 422 | `REGRA_NEGOCIO` | Regra violada (transição de status, justificativa, desmonte antes da triagem...) |
 | 500 | `ERRO_INTERNO` | Falha inesperada (detalhe apenas no log do servidor) |
 
+## Paginação, proteção e relatórios
+
+- **Paginação:** `GET /usuarios`, `/organizacoes`, `/lotes` e `/equipamentos` aceitam `?pagina=` (padrão 1) e `?limite=` (padrão 100, máximo 500). A resposta continua sendo a lista; o total vem nos cabeçalhos `X-Total-Count`, `X-Pagina` e `X-Limite`.
+- **Relatórios** (`/relatorios/organizacao/:id` e `/relatorios/status/:status`) ignoram lotes inativos (soft delete). Com `?incluirInativos=true` eles entram na conta.
+- **Código de barras:** é o `id` do equipamento, definido pelo sistema; o campo não pode ser enviado na criação.
+- **Limite de requisições:** por IP, por minuto (`RATE_LIMIT_MAX`, padrão 300). Ao exceder, responde **429** `MUITAS_REQUISICOES`.
+- **Cabeçalhos de segurança** (helmet) em todas as respostas e **CORS** só para as origens de `CORS_ORIGIN` (sem a variável, nenhuma origem externa é liberada).
+
 ## Papéis
 
 | Papel | Pode |
 |---|---|
-| SUPERUSUARIO | **Único** no sistema. Gerencia as contas (criar, listar, trocar papel e nome, ativar/desativar, redefinir senha, excluir). Não opera lotes, equipamentos nem organizações |
+| SUPERUSUARIO | **Único** no sistema e de maior acesso: gerencia as contas (criar, listar, trocar papel e nome, ativar/desativar, redefinir senha, excluir) com exclusividade e também executa tudo o que os outros papéis fazem (organizações, lotes, equipamentos, relatórios e auditoria) |
 | ADMINISTRADOR | Tudo na operação do sistema, **menos** gerir contas de usuário |
 | OPERADOR_CADASTRO | Criar/alterar/excluir organizações e contratos; consultar tudo (exceto auditoria) |
 | GESTOR_ALMOXARIFADO | Lotes, triagem, equipamentos e movimentações (incluindo corrigir e excluir); consultar tudo (exceto auditoria) |
@@ -39,7 +47,7 @@ Documentação interativa (Swagger): `http://127.0.0.1:3000/docs`.
 
 ## Rotas
 
-`L` = qualquer usuário autenticado · `S` = superusuário · `A` = admin · `C` = admin/operador · `G` = admin/gestor · `AU` = admin/auditor
+`L` = qualquer usuário autenticado · `S` = superusuário · `A` = admin · `C` = superusuário/admin/operador · `G` = superusuário/admin/gestor · `AU` = superusuário/admin/auditor (o superusuário acessa todas as rotas)
 
 ### Sistema e autenticação
 
@@ -89,16 +97,16 @@ Documentação interativa (Swagger): `http://127.0.0.1:3000/docs`.
 | PATCH | `/lotes/:id/ativo` | G | `{ativo, versao}` — **soft delete** do lote (e dos seus equipamentos). Lote inativo não aceita alterações; reativar exige a organização ativa |
 | DELETE | `/lotes/:id?versao=` | G | Exclusão definitiva em cadeia: remove o lote, equipamentos e movimentações, em qualquer status |
 | POST | `/lotes/:id/triagem` | G | `{versao}` — lote vai a `TRIAGEM_CONCLUIDA`; equipamentos a `EM_TRIAGEM` |
-| PATCH | `/lotes/:id/status` | G | `{status, versao}`: `ENCAMINHADO` → `FINALIZADO` (finalizar exige todos em `BAIXA_DEFINITIVA`) |
+| — | *(status do lote)* | — | Não há rota manual: o status do lote é **derivado** dos equipamentos. Só muda quando todos têm o mesmo status: todos `AGUARDANDO_TRIAGEM` → `RECEBIDO`; todos `EM_TRIAGEM` → `TRIAGEM_CONCLUIDA`; todos no mesmo status de desmonte/destinação → `ENCAMINHADO`; todos `BAIXA_DEFINITIVA` → `FINALIZADO`. Status misturados mantêm o lote como está |
 
 ### Equipamentos
 
 | Método | Rota | Acesso | Descrição |
 |---|---|---|---|
-| GET | `/equipamentos` | L | Filtros `status`, `tipo`, `loteId` (máx. 500) |
+| GET | `/equipamentos` | L | Filtros `status`, `tipo`, `loteId` + paginação |
 | GET | `/equipamentos/:id` | L | Detalhe + `proximosStatusPermitidos` |
 | GET | `/equipamentos/:id/rastreamento` | L | Histórico completo de movimentações |
-| PUT | `/equipamentos/:id` | G | Corrige `tipo`, `marca`, `modelo`, `anoFabricacao`, `pesoQuilogramas` + `versao`. O código de barras não muda. Não vale após baixa definitiva ou lote finalizado |
+| PUT | `/equipamentos/:id` | G | Corrige `tipo`, `marca`, `modelo`, `anoFabricacao`, `pesoQuilogramas` + `versao`. O código de barras é o próprio `id` do equipamento e não muda. Não vale após baixa definitiva ou lote finalizado |
 | DELETE | `/equipamentos/:id?versao=` | G | Exclusão definitiva do equipamento e das movimentações dele, em qualquer fase. Equipamento de lote inativo não pode ser alterado (422) |
 | PATCH | `/equipamentos/:id/status` | G | `{status, justificativa, versao}` — valida transição e registra movimentação |
 | PATCH | `/equipamentos/:id/estado-fisico` | G | `{estadoFisico, justificativa?, versao}` — piora de 2+ categorias exige justificativa |
@@ -123,7 +131,7 @@ Ir para `AGUARDANDO_DESMONTE`/`EM_DESMONTE` só é permitido quando o lote já c
 | Método | Rota | Acesso | Descrição |
 |---|---|---|---|
 | GET | `/relatorios/organizacao/:id` | L | Lotes, equipamentos, peso e contagem por status no período (`inicio`, `fim`; padrão: 90 dias) |
-| GET | `/relatorios/status/:status` | L | Equipamentos em um status de rastreamento |
+| GET | `/relatorios/status/:status` | L | Equipamentos em um status de rastreamento. Ignora lotes inativos (`?incluirInativos=true` inclui) |
 | GET | `/relatorios/financeiro` | L | Valor mensal dos contratos vigentes no período |
 | GET | `/auditoria` | AU | Journal: filtros `entidade`, `entidadeId`, `usuario`, `inicio`, `fim`, `limite` (máx. 500) |
 
@@ -133,7 +141,7 @@ Ir para `AGUARDANDO_DESMONTE`/`EM_DESMONTE` só é permitido quando o lote já c
 
 | Regra | Resposta |
 |---|---|
-| Só o **superusuário** gerencia contas; o administrador recebe 403 em `/usuarios` | 403 |
+| Só o **superusuário** gerencia contas; o administrador (e os demais papéis) recebem 403 em `/usuarios` | 403 |
 | O superusuário é **único**: o papel `SUPERUSUARIO` não é criado nem atribuído pela API, e a conta não é rebaixada, desativada nem excluída | 400 / 422 |
 | Cada usuário altera só a própria senha (`/auth/alterar-senha`, exige a senha atual) e o próprio nome (`/auth/perfil`); o superusuário também não redefine a própria senha por `/usuarios` | 422 |
 | Sempre existe ao menos **1 usuário ativo** em cada papel essencial: `ADMINISTRADOR`, `OPERADOR_CADASTRO` e `GESTOR_ALMOXARIFADO` (o `AUDITOR` só consulta e pode ficar vazio). Vale para desativar, excluir e trocar o papel | 422 |

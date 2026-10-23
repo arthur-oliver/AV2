@@ -108,7 +108,7 @@ Os detalhes de cada etapa estão abaixo.
  Pode ser executado mais de uma vez sem duplicar dados.
 
  Usuários criados:
-   superusuario / Super@123   (SUPERUSUARIO: único; gerencia as contas)
+   superusuario / Super@123   (SUPERUSUARIO: único; acesso total e dono das contas)
    admin     / Admin@123      (ADMINISTRADOR)
    operador  / Operador@123   (OPERADOR_CADASTRO)
    gestor    / Gestor@123     (GESTOR_ALMOXARIFADO)
@@ -182,9 +182,9 @@ Os detalhes de cada etapa estão abaixo.
      - Copie o valor de "token" da resposta
      - Clique em "Authorize" (topo da página), cole o token, confirme
      - Agora todas as rotas protegidas podem ser testadas ali mesmo
-     - ATENÇÃO: o superusuário só gerencia contas (/usuarios). Para testar
-       lotes, equipamentos e organizações, faça login com admin, operador
-       ou gestor (clique em "Authorize" > "Logout" e entre de novo).
+     - O superusuário acessa todas as rotas. Para testar as permissões dos
+       outros papéis, faça login com admin, operador, gestor ou auditor
+       (clique em "Authorize" > "Logout" e entre de novo).
      - Relatórios em CSV: em GET /relatorios/financeiro (ou outro
        relatório / auditoria), preencha o campo "formato" com csv; o
        arquivo baixado abre direto no Excel.
