@@ -122,10 +122,21 @@ describe('lotes e equipamentos', () => {
     expect((await req(tokens.gestor, 'POST', '/lotes', { ...base, dataEntrada: '2020-01-01' })).statusCode).toBe(400);
   });
 
-  it('não desativa organização com lote em aberto (422)', async () => {
-    const org = (await req(tokens.operador, 'GET', `/organizacoes/${orgId}`)).json();
-    const r = await req(tokens.operador, 'PATCH', `/organizacoes/${orgId}/ativo`, { ativo: false, versao: org.versao });
+  it('só recebe lote organização com contrato ativo (422 sem contrato ou com contrato vencido)', async () => {
+    const semContrato = await req(tokens.operador, 'POST', '/organizacoes', { razaoSocial: 'Sem contrato', cnpj: gerarCnpjValido() });
+    expect(semContrato.statusCode).toBe(201);
+    const r = await req(tokens.gestor, 'POST', '/lotes', { organizacaoId: semContrato.json().id, notaFiscal: 'NF-SC', transportadora: 'T' });
     expect(r.statusCode).toBe(422);
+    expect(r.json().mensagem).toContain('contrato');
+
+    const vencido = await req(tokens.operador, 'POST', '/organizacoes', {
+      razaoSocial: 'Contrato vencido',
+      cnpj: gerarCnpjValido(),
+      contrato: { dataAssinatura: '2020-01-01', dataVencimento: '2020-12-31', clausulas: ['Teste'], valorMensal: 1 }
+    });
+    expect(vencido.statusCode).toBe(201);
+    const r2 = await req(tokens.gestor, 'POST', '/lotes', { organizacaoId: vencido.json().id, notaFiscal: 'NF-V', transportadora: 'T' });
+    expect(r2.statusCode).toBe(422);
   });
 
   it('antes da triagem, o desmonte é bloqueado', async () => {

@@ -113,20 +113,31 @@ equipamentos nem organizações (separação de funções).
 
 ### 4.9 Ciclo de vida completo dos dados: corrigir e excluir sem perder o histórico
 O enunciado pedia o essencial (cadastrar, consultar, avançar status). Um sistema de uso real também precisa **corrigir
-um erro de digitação** e **desfazer um cadastro feito por engano**. A regra adotada foi: *o que ainda não virou histórico
-pode ser corrigido e excluído; o que já virou histórico só avança ou é desativado.*
+um erro de digitação** e **desfazer um cadastro feito por engano**. A regra adotada foi: *organização e lote podem ser inativados
+(soft delete) ou excluídos de vez, sempre em cadeia; a trilha de auditoria preserva o que foi feito.*
 
-| Entidade | Corrigir | Excluir | Por quê |
+| Entidade | Corrigir | Inativar (soft delete) | Excluir (definitivo) |
 |---|---|---|---|
-| Lote | nota fiscal, transportadora, observações; data de entrada só antes da triagem (regra dos 90 dias continua valendo) | só `RECEBIDO` (leva os equipamentos junto) | depois da triagem existem movimentações e relatórios que dependem dele |
-| Equipamento | tipo, marca, modelo, ano, peso (nunca o código de barras) | só antes da triagem | o código identifica o item no rastreamento; mudar status/estado físico tem rotas próprias, com justificativa |
-| Organização | dados cadastrais (já existia) | só se nunca enviou lotes; senão, desativar | lotes antigos precisam apontar para quem os enviou |
-| Contrato | substituir/renovar (já existia) | só sem lotes em aberto | o contrato ampara os lotes em processamento |
-| Usuário | papel; senha (redefinida pelo superusuário); nome | só sem histórico; senão, desativar | o login identifica o responsável nos registros de auditoria |
+| Organização | dados cadastrais | sim: inativa em cadeia todos os lotes e equipamentos; sem restrição por contrato ou lotes em aberto | sim, em cadeia: contrato, lotes, equipamentos e movimentações |
+| Lote | nota fiscal, transportadora, observações; data de entrada só antes da triagem (regra dos 90 dias continua valendo) | sim: o lote e seus equipamentos ficam só para consulta | sim, em qualquer status, levando equipamentos e movimentações |
+| Equipamento | tipo, marca, modelo, ano, peso (nunca o código de barras); status e estado físico têm rotas próprias, com justificativa | não (é tratado como inativo quando o lote está inativo) | sim, em qualquer fase |
+| Contrato | substituir/renovar | não | sim; sem contrato ativo a organização deixa de receber novos lotes |
+| Usuário | papel; senha (redefinida pelo superusuário); nome | desativar | só sem histórico; senão, desativar |
 
-Toda exclusão exige a `versao` lida (`?versao=`), roda em transação e grava o estado anterior no journal — o dado some
-da tabela, mas **a exclusão continua auditável**. Foi preferido o `DELETE` físico, restrito ao que não é histórico, a um
-"soft delete" em todas as tabelas: evita filtros `WHERE excluido = false` espalhados e mantém o banco enxuto.
+**Soft delete.** Organização e lote ganham a marca `ativo`. Inativar não apaga nada: o registro continua no banco e na
+auditoria, mas deixa de aceitar alterações (422) até ser reativado. Inativar a organização desce em cadeia para todos
+os seus lotes (`UPDATE` único dentro da transação); reativar a organização **não** reativa os lotes, que voltam um a um
+e só com a organização ativa. Equipamentos não têm coluna própria: valem como inativos enquanto o lote estiver inativo.
+
+**Exclusão em cadeia.** Excluir uma organização remove, numa única transação e nesta ordem, movimentações →
+equipamentos → lotes → contrato → organização. Excluir um lote leva seus equipamentos e movimentações. Se qualquer passo
+falhar (por exemplo, versão desatualizada), nada é removido.
+
+**Contrato e lote.** Lote só é criado em organização ativa e com contrato vigente; a ausência de contrato não torna a
+organização inativa, apenas impede novos lotes.
+
+Toda exclusão exige a `versao` lida (`?versao=`), roda em transação e grava o estado anterior de cada item removido
+no journal — o dado some da tabela, mas **a exclusão continua auditável**.
 
 ### 4.10 Proteção do próprio sistema (nunca ficar "trancado")
 - **Mínimo de 1 ativo por papel essencial.** `ADMINISTRADOR`, `OPERADOR_CADASTRO` e `GESTOR_ALMOXARIFADO` sempre têm

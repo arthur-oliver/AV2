@@ -32,10 +32,6 @@ export class OrganizacaoRepositorio {
     return r.count;
   }
 
-  lotesEmAberto(organizacaoId: string, tx: Cliente = prisma) {
-    return tx.lote.count({ where: { organizacaoId, statusProcessamento: { not: 'FINALIZADO' } } });
-  }
-
   criarContrato(data: Prisma.ContratoUncheckedCreateInput, tx: Cliente = prisma) {
     return tx.contrato.create({ data });
   }

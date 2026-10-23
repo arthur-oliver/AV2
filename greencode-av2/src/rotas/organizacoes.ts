@@ -98,7 +98,7 @@ export async function rotasOrganizacoes(app: FastifyInstance): Promise<void> {
       preHandler: escrita,
       schema: {
         tags: TAG,
-        summary: 'Ativa/desativa a organização',
+        summary: 'Soft delete: ativa/inativa a organização (ao inativar, inativa em cadeia os lotes e equipamentos)',
         security: seguranca,
         params: idParam,
         body: { type: 'object', required: ['ativo', 'versao'], properties: { ativo: { type: 'boolean' }, versao } }
@@ -147,7 +147,7 @@ export async function rotasOrganizacoes(app: FastifyInstance): Promise<void> {
       preHandler: escrita,
       schema: {
         tags: TAG,
-        summary: 'Remove o contrato (sem lotes em processamento). Informe ?versao= do contrato',
+        summary: 'Remove o contrato (sem contrato ativo a organização não recebe novos lotes). Informe ?versao= do contrato',
         security: seguranca,
         params: idParam,
         querystring: versaoQuery
@@ -162,7 +162,7 @@ export async function rotasOrganizacoes(app: FastifyInstance): Promise<void> {
       preHandler: escrita,
       schema: {
         tags: TAG,
-        summary: 'Exclui uma organização SEM lotes no histórico (senão, desative). Informe ?versao=',
+        summary: 'Exclusão definitiva em cadeia: remove a organização, o contrato, os lotes, equipamentos e movimentações. Informe ?versao=',
         security: seguranca,
         params: idParam,
         querystring: versaoQuery

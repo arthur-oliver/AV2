@@ -34,13 +34,14 @@ export async function rotasLotes(app: FastifyInstance): Promise<void> {
       preHandler: leitura,
       schema: {
         tags: TAG,
-        summary: 'Lista lotes (filtros: organizacaoId, status, período inicio/fim)',
+        summary: 'Lista lotes (filtros: organizacaoId, status, ativo, período inicio/fim)',
         security: seguranca,
         querystring: {
           type: 'object',
           properties: {
             organizacaoId: { type: 'string', minLength: 36, maxLength: 36 },
             status: { type: 'string', enum: Object.values(StatusLote) },
+            ativo: { type: 'boolean' },
             inicio: { type: 'string', maxLength: 30 },
             fim: { type: 'string', maxLength: 30 }
           }
@@ -116,6 +117,21 @@ export async function rotasLotes(app: FastifyInstance): Promise<void> {
     c.avancarStatus as never
   );
 
+  app.patch(
+    '/lotes/:id/ativo',
+    {
+      preHandler: escrita,
+      schema: {
+        tags: TAG,
+        summary: 'Soft delete: inativa ou reativa o lote (e, com ele, seus equipamentos). Exige a "versao"',
+        security: seguranca,
+        params: idParam,
+        body: { type: 'object', required: ['ativo', 'versao'], properties: { ativo: { type: 'boolean' }, versao } }
+      }
+    },
+    c.alterarAtivo as never
+  );
+
   app.put(
     '/lotes/:id',
     {
@@ -147,7 +163,7 @@ export async function rotasLotes(app: FastifyInstance): Promise<void> {
       preHandler: escrita,
       schema: {
         tags: TAG,
-        summary: 'Exclui um lote registrado por engano, com seus equipamentos (só antes da triagem). Informe ?versao=',
+        summary: 'Exclusão definitiva em cadeia: remove o lote, seus equipamentos e movimentações (qualquer status). Informe ?versao=',
         security: seguranca,
         params: idParam,
         querystring: versaoQuery

@@ -429,21 +429,13 @@ describe('lotes e equipamentos: correção e exclusão', () => {
     expect(journal.some((x) => x.operacao === 'EXCLUIR')).toBe(true);
   });
 
-  it('depois da triagem, o lote e seus equipamentos não podem mais ser excluídos nem ter a data alterada', async () => {
+  it('depois da triagem, a data de entrada não pode mais ser alterada (nota fiscal e observações sim)', async () => {
     const antes = await buscarLote(loteId);
     expect((await req(tokens.gestor, 'POST', `/lotes/${loteId}/triagem`, { versao: antes.versao })).statusCode).toBe(200);
 
     const lote = await buscarLote(loteId);
-    const excluirLote = await req(tokens.gestor, 'DELETE', `/lotes/${loteId}?versao=${lote.versao}`);
-    expect(excluirLote.statusCode).toBe(422);
-
-    const eq = await buscarEquipamento(eqIds[0]);
-    const excluirEq = await req(tokens.gestor, 'DELETE', `/equipamentos/${eqIds[0]}?versao=${eq.versao}`);
-    expect(excluirEq.statusCode).toBe(422);
-
     const hoje = new Date().toISOString().slice(0, 10);
     expect((await req(tokens.gestor, 'PUT', `/lotes/${loteId}`, { dataEntrada: hoje, versao: lote.versao })).statusCode).toBe(422);
-    // mas nota fiscal e observações ainda podem ser corrigidas
     expect((await req(tokens.gestor, 'PUT', `/lotes/${loteId}`, { observacoes: 'Ajuste pós-triagem', versao: lote.versao })).statusCode).toBe(200);
   });
 
@@ -458,15 +450,14 @@ describe('lotes e equipamentos: correção e exclusão', () => {
     }
   });
 
-  // Organizações (usam o orgId criado acima, que já tem lotes)
-  it('organização com lotes no histórico não pode ser excluída (nem o contrato removido com lotes em aberto)', async () => {
+  it('o contrato pode ser removido mesmo com lotes em aberto; sem contrato ativo a organização não recebe novo lote', async () => {
     const org = await buscarOrg(orgId);
-    const excluir = await req(tokens.operador, 'DELETE', `/organizacoes/${orgId}?versao=${org.versao}`);
-    expect(excluir.statusCode).toBe(422);
-    expect(excluir.json().mensagem).toContain('lote');
-
     const contrato = await req(tokens.operador, 'DELETE', `/organizacoes/${orgId}/contrato?versao=${org.contrato.versao}`);
-    expect(contrato.statusCode).toBe(422);
+    expect(contrato.statusCode).toBe(200);
+
+    const novo = await req(tokens.gestor, 'POST', '/lotes', { organizacaoId: orgId, notaFiscal: 'NF-SEM', transportadora: 'T' });
+    expect(novo.statusCode).toBe(422);
+    expect((await buscarLote(loteId)).id).toBe(loteId); // o lote que já existia continua lá
   });
 });
 
@@ -511,6 +502,147 @@ describe('organizações e contratos: exclusão', () => {
 
     // não há mais contrato para remover
     expect((await req(tokens.operador, 'DELETE', `/organizacoes/${org.id}/contrato?versao=1`)).statusCode).toBe(422);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+describe('soft delete e exclusão em cadeia', () => {
+  async function criarCenario(rotulo: string) {
+    const org = await req(tokens.operador, 'POST', '/organizacoes', {
+      razaoSocial: `${rotulo} ${SUFIXO}`,
+      cnpj: gerarCnpjValido(),
+      contrato: { dataVencimento: '2099-12-31', clausulas: ['Teste'], valorMensal: 10 }
+    });
+    expect(org.statusCode).toBe(201);
+    const orgId = org.json().id as string;
+    const lotes: { id: string; eqIds: string[] }[] = [];
+    for (const nf of ['A', 'B']) {
+      const l = await req(tokens.gestor, 'POST', '/lotes', {
+        organizacaoId: orgId,
+        notaFiscal: `NF-${rotulo}-${nf}`,
+        transportadora: 'T',
+        equipamentos: [
+          { tipo: 'NOTEBOOK', anoFabricacao: 2020, pesoQuilogramas: 2 },
+          { tipo: 'MONITOR', anoFabricacao: 2019, pesoQuilogramas: 3 }
+        ]
+      });
+      expect(l.statusCode).toBe(201);
+      lotes.push({ id: l.json().id, eqIds: (l.json().equipamentos as { id: string }[]).map((e) => e.id) });
+    }
+    return { orgId, lotes };
+  }
+
+  it('inativar um lote (soft delete) mantém os dados, bloqueia alterações e permite reativar', async () => {
+    const { orgId, lotes } = await criarCenario('SoftLote');
+    const lote = await buscarLote(lotes[0].id);
+
+    // sem versão / versão errada / sem permissão
+    expect((await req(tokens.gestor, 'PATCH', `/lotes/${lote.id}/ativo`, { ativo: false })).statusCode).toBe(400);
+    expect((await req(tokens.gestor, 'PATCH', `/lotes/${lote.id}/ativo`, { ativo: false, versao: lote.versao + 4 })).statusCode).toBe(409);
+    expect((await req(tokens.operador, 'PATCH', `/lotes/${lote.id}/ativo`, { ativo: false, versao: lote.versao })).statusCode).toBe(403);
+
+    const off = await req(tokens.gestor, 'PATCH', `/lotes/${lote.id}/ativo`, { ativo: false, versao: lote.versao });
+    expect(off.statusCode).toBe(200);
+    expect(off.json().ativo).toBe(false);
+    expect(off.json().equipamentos).toHaveLength(2); // continua no banco
+
+    // listagem filtra por ativo
+    const inativos = (await req(tokens.gestor, 'GET', `/lotes?organizacaoId=${orgId}&ativo=false`)).json() as { id: string }[];
+    expect(inativos.map((l) => l.id)).toEqual([lote.id]);
+    const ativos = (await req(tokens.gestor, 'GET', `/lotes?organizacaoId=${orgId}&ativo=true`)).json() as { id: string }[];
+    expect(ativos.map((l) => l.id)).not.toContain(lote.id);
+
+    // lote e equipamentos inativos não aceitam alteração (422)
+    const inativo = await buscarLote(lote.id);
+    expect((await req(tokens.gestor, 'PUT', `/lotes/${lote.id}`, { notaFiscal: 'X', versao: inativo.versao })).statusCode).toBe(422);
+    expect((await req(tokens.gestor, 'POST', `/lotes/${lote.id}/triagem`, { versao: inativo.versao })).statusCode).toBe(422);
+    const eq = await buscarEquipamento(lotes[0].eqIds[0]);
+    expect((await req(tokens.gestor, 'PUT', `/equipamentos/${eq.id}`, { marca: 'X', versao: eq.versao })).statusCode).toBe(422);
+
+    // reativa e volta a aceitar alterações
+    const on = await req(tokens.gestor, 'PATCH', `/lotes/${lote.id}/ativo`, { ativo: true, versao: inativo.versao });
+    expect(on.statusCode).toBe(200);
+    expect(on.json().ativo).toBe(true);
+    expect((await req(tokens.gestor, 'PUT', `/lotes/${lote.id}`, { notaFiscal: 'NF-OK', versao: on.json().versao })).statusCode).toBe(200);
+
+    const journal = (await req(tokens.auditor, 'GET', `/auditoria?entidade=Lote&entidadeId=${lote.id}`)).json().registros as { operacao: string }[];
+    expect(journal.filter((j) => j.operacao === 'ATUALIZAR').length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('exclusão definitiva do lote em qualquer status remove também os equipamentos', async () => {
+    const { lotes } = await criarCenario('HardLote');
+    const lote = await buscarLote(lotes[0].id);
+    expect((await req(tokens.gestor, 'POST', `/lotes/${lote.id}/triagem`, { versao: lote.versao })).statusCode).toBe(200);
+
+    const depois = await buscarLote(lote.id); // já em TRIAGEM_CONCLUIDA
+    expect((await req(tokens.gestor, 'DELETE', `/lotes/${lote.id}?versao=${depois.versao}`)).statusCode).toBe(204);
+    expect((await req(tokens.gestor, 'GET', `/lotes/${lote.id}`)).statusCode).toBe(404);
+    for (const id of lotes[0].eqIds) expect((await req(tokens.gestor, 'GET', `/equipamentos/${id}`)).statusCode).toBe(404);
+    // o outro lote da organização não é afetado
+    expect((await req(tokens.gestor, 'GET', `/lotes/${lotes[1].id}`)).statusCode).toBe(200);
+  });
+
+  it('exclusão definitiva do equipamento vale em qualquer fase (depois da triagem também)', async () => {
+    const { lotes } = await criarCenario('HardEq');
+    const lote = await buscarLote(lotes[0].id);
+    expect((await req(tokens.gestor, 'POST', `/lotes/${lote.id}/triagem`, { versao: lote.versao })).statusCode).toBe(200);
+
+    const eq = await buscarEquipamento(lotes[0].eqIds[0]);
+    expect((await req(tokens.gestor, 'DELETE', `/equipamentos/${eq.id}?versao=${eq.versao}`)).statusCode).toBe(204);
+    expect((await req(tokens.gestor, 'GET', `/equipamentos/${eq.id}`)).statusCode).toBe(404);
+  });
+
+  it('inativar a organização inativa em cadeia os lotes e equipamentos, mesmo com contrato ativo e lotes em aberto', async () => {
+    const { orgId, lotes } = await criarCenario('SoftOrg');
+    const org = await buscarOrg(orgId);
+    expect(org.contratoVigente).toBe(true);
+
+    const off = await req(tokens.operador, 'PATCH', `/organizacoes/${orgId}/ativo`, { ativo: false, versao: org.versao });
+    expect(off.statusCode).toBe(200);
+    expect(off.json().ativo).toBe(false);
+
+    for (const l of lotes) {
+      const lote = await buscarLote(l.id);
+      expect(lote.ativo).toBe(false);
+      expect(lote.equipamentos).toHaveLength(2); // nada foi apagado
+    }
+    const eq = await buscarEquipamento(lotes[0].eqIds[0]);
+    expect((await req(tokens.gestor, 'PUT', `/equipamentos/${eq.id}`, { marca: 'X', versao: eq.versao })).statusCode).toBe(422);
+    // organização inativa não recebe lote
+    expect((await req(tokens.gestor, 'POST', '/lotes', { organizacaoId: orgId, notaFiscal: 'NF-N', transportadora: 'T' })).statusCode).toBe(422);
+
+    // reativar a organização não reativa os lotes; e um lote só volta com a organização ativa
+    const lote = await buscarLote(lotes[0].id);
+    expect((await req(tokens.gestor, 'PATCH', `/lotes/${lote.id}/ativo`, { ativo: true, versao: lote.versao })).statusCode).toBe(422);
+    const inativa = await buscarOrg(orgId);
+    expect((await req(tokens.operador, 'PATCH', `/organizacoes/${orgId}/ativo`, { ativo: true, versao: inativa.versao })).statusCode).toBe(200);
+    expect((await buscarLote(lotes[1].id)).ativo).toBe(false);
+    expect((await req(tokens.gestor, 'PATCH', `/lotes/${lote.id}/ativo`, { ativo: true, versao: lote.versao })).statusCode).toBe(200);
+  });
+
+  it('excluir a organização remove em cadeia contrato, lotes, equipamentos e registra tudo no journal', async () => {
+    const { orgId, lotes } = await criarCenario('HardOrg');
+    const org = await buscarOrg(orgId);
+    const contratoId = org.contrato.id as string;
+
+    expect((await req(tokens.operador, 'DELETE', `/organizacoes/${orgId}?versao=${org.versao + 3}`)).statusCode).toBe(409);
+    expect((await req(tokens.gestor, 'DELETE', `/organizacoes/${orgId}?versao=${org.versao}`)).statusCode).toBe(403);
+    // a tentativa com versão errada não pode ter apagado nada (transação)
+    expect((await req(tokens.gestor, 'GET', `/lotes/${lotes[0].id}`)).statusCode).toBe(200);
+
+    expect((await req(tokens.operador, 'DELETE', `/organizacoes/${orgId}?versao=${org.versao}`)).statusCode).toBe(204);
+    expect((await req(tokens.operador, 'GET', `/organizacoes/${orgId}`)).statusCode).toBe(404);
+    for (const l of lotes) {
+      expect((await req(tokens.gestor, 'GET', `/lotes/${l.id}`)).statusCode).toBe(404);
+      for (const id of l.eqIds) expect((await req(tokens.gestor, 'GET', `/equipamentos/${id}`)).statusCode).toBe(404);
+    }
+
+    const excluidos = async (entidade: string, id: string) =>
+      ((await req(tokens.auditor, 'GET', `/auditoria?entidade=${entidade}&entidadeId=${id}`)).json().registros as { operacao: string }[]).some((j) => j.operacao === 'EXCLUIR');
+    expect(await excluidos('Organizacao', orgId)).toBe(true);
+    expect(await excluidos('Contrato', contratoId)).toBe(true);
+    expect(await excluidos('Lote', lotes[0].id)).toBe(true);
+    expect(await excluidos('Equipamento', lotes[1].eqIds[1])).toBe(true);
   });
 });
 

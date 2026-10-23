@@ -8,7 +8,7 @@ type ComId = { Params: { id: string } };
 export class LoteController {
   constructor(private readonly servico = new LoteServico()) {}
 
-  listar = async (req: FastifyRequest<{ Querystring: { organizacaoId?: string; status?: StatusLote; inicio?: string; fim?: string } }>) =>
+  listar = async (req: FastifyRequest<{ Querystring: { organizacaoId?: string; status?: StatusLote; ativo?: boolean; inicio?: string; fim?: string } }>) =>
     this.servico.listar(req.query);
 
   buscar = async (req: FastifyRequest<ComId>) => this.servico.buscar(req.params.id);
@@ -28,6 +28,9 @@ export class LoteController {
 
   avancarStatus = async (req: FastifyRequest<ComId & { Body: { status: StatusLote; versao: number } }>) =>
     this.servico.avancarStatus(req.params.id, req.body.status, req.body.versao, req.user.usuario);
+
+  alterarAtivo = async (req: FastifyRequest<ComId & { Body: { ativo: boolean; versao: number } }>) =>
+    this.servico.alterarAtivo(req.params.id, req.body.ativo, req.body.versao, req.user.usuario);
 
   atualizar = async (req: FastifyRequest<ComId & { Body: DadosEdicaoLote & { versao: number } }>) => {
     const { versao, ...dados } = req.body;

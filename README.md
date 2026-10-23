@@ -31,7 +31,7 @@ API REST em Node.js e TypeScript para apoiar a **logística reversa de resíduos
 
 * **Sem atualizações perdidas:** versionamento otimista; alterar ou excluir exige a `versao` lida, e uma versão antiga responde 409.
 * **Tudo ou nada:** cada operação roda em transação junto com o registro de auditoria.
-* **Histórico preservado:** lote e equipamento só são excluídos antes da triagem; organização com lotes e usuário com histórico apenas são desativados.
+* **Soft delete e exclusão em cadeia:** organização e lote podem ser inativados (os dados ficam no banco) ou excluídos de vez; a ação desce em cadeia para lotes, equipamentos e movimentações, numa transação e com tudo no journal. Lote só nasce em organização com contrato ativo. Usuário com histórico apenas é desativado.
 * **Sistema nunca sem responsáveis:** sempre existe ao menos um usuário ativo nos papéis essenciais, ninguém desativa ou exclui a si mesmo, e o papel de superusuário não pode ser criado, atribuído nem removido pela API.
 * **Acesso protegido:** senhas com bcrypt, papel conferido no banco a cada requisição e bloqueio do login por 15 minutos após 5 senhas erradas.
 

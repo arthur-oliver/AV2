@@ -1,5 +1,7 @@
 import { prisma } from '../lib/prisma';
 import { OrganizacaoRepositorio } from '../repositorios/OrganizacaoRepositorio';
+import { LoteRepositorio } from '../repositorios/LoteRepositorio';
+import { EquipamentoRepositorio } from '../repositorios/EquipamentoRepositorio';
 import { ValidadorCNPJ, somenteDigitos } from '../validadores/ValidadorCNPJ';
 import { Conflito, ErroValidacao, NaoEncontrado, RegraNegocio } from '../erros/AppError';
 import { registrarJournal } from '../utils/auditoria';
@@ -54,6 +56,8 @@ function comVigencia<T extends { contrato: { dataVencimento: Date } | null }>(or
 export class OrganizacaoServico {
   constructor(
     private readonly repo = new OrganizacaoRepositorio(),
+    private readonly lotes = new LoteRepositorio(),
+    private readonly equipamentos = new EquipamentoRepositorio(),
     private readonly validadorCnpj = new ValidadorCNPJ()
   ) {}
 
@@ -117,11 +121,12 @@ export class OrganizacaoServico {
       const antes = await this.repo.buscarPorId(id, tx);
       if (!antes) throw new NaoEncontrado('Organização');
 
-      // Regra: não desativa organização que ainda tem lotes em processamento.
-      if (!ativo && (await this.repo.lotesEmAberto(id, tx)) > 0) {
-        throw new RegraNegocio('A organização possui lotes ainda não finalizados e não pode ser desativada.');
-      }
       exigirAtualizacao(await this.repo.atualizarComVersao(id, versao, { ativo }, tx), true, 'Organização');
+
+      // Soft delete em cadeia: inativar a organização inativa todos os lotes dela (e, com eles, os equipamentos).
+      // Não há restrição por contrato nem por lotes em aberto. Reativar a organização NÃO reativa os lotes:
+      // cada lote é reativado individualmente (PATCH /lotes/:id/ativo).
+      const lotesInativados = !ativo ? await this.lotes.inativarDaOrganizacao(id, tx) : 0;
 
       const depois = (await this.repo.buscarPorId(id, tx))!;
       await registrarJournal(tx, {
@@ -129,7 +134,7 @@ export class OrganizacaoServico {
         entidade: 'Organizacao',
         entidadeId: id,
         dadosAntes: { ativo: antes.ativo },
-        dadosDepois: { ativo },
+        dadosDepois: { ativo, lotesInativados },
         usuario
       });
       return depois;
@@ -191,40 +196,59 @@ export class OrganizacaoServico {
     return this.buscar(organizacaoId);
   }
 
-  // Remove o contrato da organização. Não pode haver lotes em processamento, pois o contrato os ampara.
+  // Remove o contrato da organização (contrato só tem exclusão definitiva). Sem contrato ativo, a organização
+  // continua existindo, mas não recebe novos lotes.
   async removerContrato(organizacaoId: string, versao: number, usuario: string) {
     await prisma.$transaction(async (tx) => {
       const org = await this.repo.buscarPorId(organizacaoId, tx);
       if (!org) throw new NaoEncontrado('Organização');
       if (!org.contrato) throw new RegraNegocio('A organização não possui contrato.');
-      if ((await this.repo.lotesEmAberto(organizacaoId, tx)) > 0) {
-        throw new RegraNegocio('A organização possui lotes ainda não finalizados e seu contrato não pode ser removido.');
-      }
       exigirAtualizacao(await this.repo.excluirContratoComVersao(org.contrato.id, versao, tx), true, 'Contrato');
       await registrarJournal(tx, { operacao: 'EXCLUIR', entidade: 'Contrato', entidadeId: org.contrato.id, dadosAntes: org.contrato, usuario });
     });
     return this.buscar(organizacaoId);
   }
 
-  // Exclui uma organização cadastrada por engano. Se ela já enviou lotes, faz parte do histórico: o caminho é desativá-la.
+  // Exclusão definitiva (hard delete) em cadeia, numa única transação: movimentações -> equipamentos -> lotes ->
+  // contrato -> organização. Se qualquer passo falhar, nada é removido. Tudo fica registrado no journal.
   async excluir(id: string, versao: number, usuario: string): Promise<void> {
     await prisma.$transaction(async (tx) => {
       const org = await this.repo.buscarPorId(id, tx);
       if (!org) throw new NaoEncontrado('Organização');
 
-      const lotes = await this.repo.contarLotes(id, tx);
-      if (lotes > 0) {
-        throw new RegraNegocio(
-          `A organização possui ${lotes} lote(s) no histórico e não pode ser excluída. Desative-a para impedir novos lotes.`
-        );
-      }
+      const lotes = await this.lotes.listarDaOrganizacao(id, tx);
+      await this.equipamentos.excluirDaOrganizacao(id, tx);
+      await this.lotes.excluirDaOrganizacao(id, tx);
+
       const { contrato, ...dadosOrg } = org;
       if (contrato) {
         exigirAtualizacao(await this.repo.excluirContratoComVersao(contrato.id, contrato.versao, tx), true, 'Contrato');
-        await registrarJournal(tx, { operacao: 'EXCLUIR', entidade: 'Contrato', entidadeId: contrato.id, dadosAntes: contrato, usuario });
       }
       exigirAtualizacao(await this.repo.excluirComVersao(id, versao, tx), true, 'Organização');
-      await registrarJournal(tx, { operacao: 'EXCLUIR', entidade: 'Organizacao', entidadeId: id, dadosAntes: dadosOrg, usuario });
+
+      for (const l of lotes) {
+        const { equipamentos, ...dadosLote } = l;
+        for (const e of equipamentos) {
+          await registrarJournal(tx, { operacao: 'EXCLUIR', entidade: 'Equipamento', entidadeId: e.id, dadosAntes: e, usuario });
+        }
+        await registrarJournal(tx, {
+          operacao: 'EXCLUIR',
+          entidade: 'Lote',
+          entidadeId: l.id,
+          dadosAntes: { ...dadosLote, equipamentosRemovidos: equipamentos.map((e) => e.codigoBarrasInterno) },
+          usuario
+        });
+      }
+      if (contrato) {
+        await registrarJournal(tx, { operacao: 'EXCLUIR', entidade: 'Contrato', entidadeId: contrato.id, dadosAntes: contrato, usuario });
+      }
+      await registrarJournal(tx, {
+        operacao: 'EXCLUIR',
+        entidade: 'Organizacao',
+        entidadeId: id,
+        dadosAntes: { ...dadosOrg, lotesRemovidos: lotes.length },
+        usuario
+      });
     });
   }
 }

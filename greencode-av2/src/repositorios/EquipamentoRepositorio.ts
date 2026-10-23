@@ -7,7 +7,7 @@ export class EquipamentoRepositorio {
   buscarPorId(id: string, tx: Cliente = prisma) {
     return tx.equipamento.findUnique({
       where: { id },
-      include: { lote: { select: { id: true, statusProcessamento: true, organizacaoId: true, notaFiscal: true } } }
+      include: { lote: { select: { id: true, statusProcessamento: true, ativo: true, organizacaoId: true, notaFiscal: true } } }
     });
   }
 
@@ -68,6 +68,13 @@ export class EquipamentoRepositorio {
   async excluirDoLote(loteId: string, tx: Cliente = prisma) {
     await tx.movimentacao.deleteMany({ where: { equipamento: { loteId } } });
     const r = await tx.equipamento.deleteMany({ where: { loteId } });
+    return r.count;
+  }
+
+  // Exclui todos os equipamentos (e movimentações) de todos os lotes de uma organização. Usado na exclusão em cadeia.
+  async excluirDaOrganizacao(organizacaoId: string, tx: Cliente = prisma) {
+    await tx.movimentacao.deleteMany({ where: { equipamento: { lote: { organizacaoId } } } });
+    const r = await tx.equipamento.deleteMany({ where: { lote: { organizacaoId } } });
     return r.count;
   }
 

@@ -15,7 +15,7 @@ O sistema controla:
 * auditoria;
 * persistência dos dados.
 
-Além do cadastro e da consulta pedidos no enunciado, a API cobre o ciclo de vida completo dos dados: correções, exclusões do que ainda não virou histórico e regras que impedem o sistema de ficar sem responsáveis (veja as seções 5 e 7).
+Além do cadastro e da consulta pedidos no enunciado, a API cobre o ciclo de vida completo dos dados: correções, soft delete e exclusão em cadeia (organização → lotes → equipamentos → movimentações) e regras que impedem o sistema de ficar sem responsáveis (veja as seções 5 e 7).
 
 A solução foi estruturada como um monólito, preparado para ser consumido por uma futura interface web (SPA).
 
@@ -145,8 +145,10 @@ Entre as principais validações estão:
 * lote só pode ser finalizado quando todos os equipamentos tiverem baixa definitiva;
 * operações que dependem de uma organização, lote ou equipamento existente devem rejeitar identificadores inexistentes;
 * toda alteração ou exclusão exige a `versao` lida (versionamento otimista);
-* lote e equipamento só são excluídos antes da triagem; a data de entrada do lote só é corrigida antes da triagem e continua obedecendo à regra dos 90 dias;
-* organização que já enviou lotes não é excluída (apenas desativada); o contrato só é removido sem lotes em aberto;
+* a data de entrada do lote só é corrigida antes da triagem e continua obedecendo à regra dos 90 dias;
+* soft delete: inativar uma organização inativa em cadeia seus lotes e equipamentos (sem restrição por contrato); inativar um lote o deixa só para consulta;
+* exclusão em cadeia: excluir uma organização remove contrato, lotes, equipamentos e movimentações; excluir um lote remove seus equipamentos; equipamento e contrato só têm exclusão definitiva;
+* lote só é criado em organização ativa e com contrato ativo (vigente);
 * equipamento com baixa definitiva ou de lote finalizado não é editado;
 * conta de usuário com histórico não é excluída (apenas desativada).
 
@@ -243,7 +245,7 @@ Entre as validações estão:
 * autorização por papel;
 * rastreabilidade;
 * conflito de versão;
-* correção e exclusão de lotes, equipamentos, organizações, contratos e usuários;
+* correção, soft delete e exclusão em cadeia de organizações e lotes; exclusão de equipamentos, contratos e usuários;
 * regra de "sempre ao menos 1 usuário ativo" por papel e proteção contra autoexclusão;
 * bloqueio de login por tentativas e troca de papel com efeito imediato;
 * tratamento de operações inválidas.

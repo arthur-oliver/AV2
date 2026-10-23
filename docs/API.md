@@ -8,7 +8,7 @@ Documentação interativa (Swagger): `http://127.0.0.1:3000/docs`.
 - **Autenticação:** `Authorization: Bearer <token>` (token obtido em `POST /auth/login`).
 - **IDs:** UUID (36 caracteres). **Datas:** `AAAA-MM-DD` ou ISO 8601. **Decimais** (`valorMensal`, `pesoQuilogramas`) são devolvidos como texto (ex.: `"1.800"`) para não perder precisão.
 - **Versionamento otimista:** toda alteração de organização, contrato, lote, equipamento e papel de usuário exige o campo `versao` lido anteriormente. Versão desatualizada → **409**. Nas exclusões (`DELETE`) a versão vai na URL: `?versao=3`.
-- **Exclusões** respondem **204** (sem corpo). O que já faz parte do histórico (lote triado, organização com lotes, usuário que já operou) não é excluído: veja "Regras de proteção" abaixo.
+- **Exclusões** respondem **204** (sem corpo). Organização e lote têm **soft delete** (`PATCH .../ativo`) e exclusão definitiva **em cadeia** (`DELETE`); equipamento e contrato só têm exclusão definitiva. Conta de usuário que já operou só é desativada: veja "Regras de proteção" abaixo.
 
 ### Formato de erro
 
@@ -71,22 +71,23 @@ Documentação interativa (Swagger): `http://127.0.0.1:3000/docs`.
 | GET | `/organizacoes/:id` | L | Detalhe com contrato e `contratoVigente` |
 | POST | `/organizacoes` | C | Cria (contrato opcional). Valida CNPJ; 409 se repetido |
 | PUT | `/organizacoes/:id` | C | Atualiza dados (exige `versao`; CNPJ não muda) |
-| PATCH | `/organizacoes/:id/ativo` | C | `{ativo, versao}`; 422 se há lotes não finalizados |
+| PATCH | `/organizacoes/:id/ativo` | C | `{ativo, versao}` — **soft delete**. Ao inativar, inativa em cadeia todos os lotes (e seus equipamentos); sem restrição por contrato ou lotes em aberto. Reativar não reativa os lotes |
 | PUT | `/organizacoes/:id/contrato` | C | Cria ou substitui o contrato (substituir exige `versao` do contrato) |
 | PATCH | `/organizacoes/:id/contrato/renovar` | C | `{novoVencimento, versao}` (deve ser posterior ao atual) |
-| DELETE | `/organizacoes/:id/contrato?versao=` | C | Remove o contrato (versão do contrato). 422 se há lotes não finalizados |
-| DELETE | `/organizacoes/:id?versao=` | C | Exclui a organização. 422 se ela tem lotes no histórico (nesse caso, desative) |
+| DELETE | `/organizacoes/:id/contrato?versao=` | C | Remove o contrato (versão do contrato). Sem contrato ativo a organização não recebe novos lotes |
+| DELETE | `/organizacoes/:id?versao=` | C | Exclusão definitiva **em cadeia**: remove contrato, lotes, equipamentos e movimentações (uma transação; tudo no journal) |
 
 ### Lotes
 
 | Método | Rota | Acesso | Descrição |
 |---|---|---|---|
-| GET | `/lotes` | L | Filtros `organizacaoId`, `status`, `inicio`, `fim` |
+| GET | `/lotes` | L | Filtros `organizacaoId`, `status`, `ativo`, `inicio`, `fim` |
 | GET | `/lotes/:id` | L | Lote + equipamentos + `resumo` (quantidade, peso total, texto de triagem) |
-| POST | `/lotes` | G | Cria o lote (e equipamentos opcionais) numa transação. Data de entrada: hoje até 90 dias atrás |
+| POST | `/lotes` | G | Cria o lote (e equipamentos opcionais) numa transação. Data de entrada: hoje até 90 dias atrás. A organização precisa estar ativa e ter **contrato ativo** (422) |
 | POST | `/lotes/:id/equipamentos` | G | `{versao, equipamentos[]}` — só em lote `RECEBIDO` |
 | PUT | `/lotes/:id` | G | Corrige `notaFiscal`, `transportadora`, `observacoes`, `dataEntrada` (esta só antes da triagem, regra dos 90 dias) + `versao`. Lote finalizado não muda |
-| DELETE | `/lotes/:id?versao=` | G | Exclui o lote e seus equipamentos. Só com status `RECEBIDO` |
+| PATCH | `/lotes/:id/ativo` | G | `{ativo, versao}` — **soft delete** do lote (e dos seus equipamentos). Lote inativo não aceita alterações; reativar exige a organização ativa |
+| DELETE | `/lotes/:id?versao=` | G | Exclusão definitiva em cadeia: remove o lote, equipamentos e movimentações, em qualquer status |
 | POST | `/lotes/:id/triagem` | G | `{versao}` — lote vai a `TRIAGEM_CONCLUIDA`; equipamentos a `EM_TRIAGEM` |
 | PATCH | `/lotes/:id/status` | G | `{status, versao}`: `ENCAMINHADO` → `FINALIZADO` (finalizar exige todos em `BAIXA_DEFINITIVA`) |
 
@@ -98,7 +99,7 @@ Documentação interativa (Swagger): `http://127.0.0.1:3000/docs`.
 | GET | `/equipamentos/:id` | L | Detalhe + `proximosStatusPermitidos` |
 | GET | `/equipamentos/:id/rastreamento` | L | Histórico completo de movimentações |
 | PUT | `/equipamentos/:id` | G | Corrige `tipo`, `marca`, `modelo`, `anoFabricacao`, `pesoQuilogramas` + `versao`. O código de barras não muda. Não vale após baixa definitiva ou lote finalizado |
-| DELETE | `/equipamentos/:id?versao=` | G | Exclui o equipamento. Só antes da triagem (lote `RECEBIDO`, equipamento `AGUARDANDO_TRIAGEM`) |
+| DELETE | `/equipamentos/:id?versao=` | G | Exclusão definitiva do equipamento e das movimentações dele, em qualquer fase. Equipamento de lote inativo não pode ser alterado (422) |
 | PATCH | `/equipamentos/:id/status` | G | `{status, justificativa, versao}` — valida transição e registra movimentação |
 | PATCH | `/equipamentos/:id/estado-fisico` | G | `{estadoFisico, justificativa?, versao}` — piora de 2+ categorias exige justificativa |
 | POST | `/equipamentos/:id/movimentacoes` | G | `{destino, observacao?}` — movimentação física sem mudar status |
@@ -139,8 +140,8 @@ Ir para `AGUARDANDO_DESMONTE`/`EM_DESMONTE` só é permitido quando o lote já c
 | Ninguém desativa, exclui nem troca o próprio papel | 422 |
 | O papel usado nas permissões é o do banco, não o do token: trocar ou desativar tem efeito imediato | 403 / 401 |
 | Conta que já operou o sistema (tem histórico de auditoria) só pode ser desativada | 422 |
-| Organização que já enviou lotes só pode ser desativada | 422 |
-| Lote só é excluído antes da triagem; equipamento também | 422 |
+| Lote só é criado em organização **ativa** e com **contrato ativo** (vigente) | 422 |
+| Lote inativo (soft delete) e seus equipamentos ficam só para consulta até a reativação; um lote só é reativado com a organização ativa | 422 |
 | 5 senhas erradas seguidas para o mesmo login bloqueiam novas tentativas por 15 minutos | 429 |
 | Toda criação, correção e exclusão grava antes/depois no journal (`GET /auditoria`) | — |
 

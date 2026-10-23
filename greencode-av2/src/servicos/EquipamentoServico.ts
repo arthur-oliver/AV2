@@ -19,6 +19,11 @@ export interface DadosEdicaoEquipamento {
   pesoQuilogramas?: number;
 }
 
+// Equipamento de lote inativado (soft delete em cadeia) fica só para consulta.
+function exigirLoteAtivo(e: { lote: { ativo: boolean } }): void {
+  if (!e.lote.ativo) throw new RegraNegocio('O lote deste equipamento está inativo. Reative o lote para alterar o equipamento.');
+}
+
 export class EquipamentoServico {
   constructor(
     private readonly repo = new EquipamentoRepositorio(),
@@ -47,6 +52,7 @@ export class EquipamentoServico {
     await prisma.$transaction(async (tx) => {
       const e = await this.repo.buscarPorId(id, tx);
       if (!e) throw new NaoEncontrado('Equipamento');
+      exigirLoteAtivo(e);
 
       validarTransicaoRastreamento(e.statusRastreamento, novo, e.lote.statusProcessamento, justificativa);
 
@@ -71,6 +77,7 @@ export class EquipamentoServico {
     await prisma.$transaction(async (tx) => {
       const e = await this.repo.buscarPorId(id, tx);
       if (!e) throw new NaoEncontrado('Equipamento');
+      exigirLoteAtivo(e);
       if (e.estadoFisico === novo) throw new RegraNegocio('O equipamento já está neste estado físico.');
 
       validarMudancaEstadoFisico(e.estadoFisico, novo, justificativa);
@@ -93,6 +100,7 @@ export class EquipamentoServico {
     return prisma.$transaction(async (tx) => {
       const e = await this.repo.buscarPorId(id, tx);
       if (!e) throw new NaoEncontrado('Equipamento');
+      exigirLoteAtivo(e);
       const ultima = await this.repo.ultimaMovimentacao(id, tx);
       const mov = await this.repo.criarMovimentacao(
         {
@@ -122,6 +130,7 @@ export class EquipamentoServico {
     await prisma.$transaction(async (tx) => {
       const e = await this.repo.buscarPorId(id, tx);
       if (!e) throw new NaoEncontrado('Equipamento');
+      exigirLoteAtivo(e);
       if (e.statusRastreamento === Status.BAIXA_DEFINITIVA || e.lote.statusProcessamento === StatusLote.FINALIZADO) {
         throw new RegraNegocio('Equipamento com baixa definitiva ou de lote finalizado não pode ser editado.');
       }
@@ -134,17 +143,11 @@ export class EquipamentoServico {
     return this.buscar(id);
   }
 
-  // Exclui um equipamento cadastrado por engano. Só é permitido antes da triagem (lote RECEBIDO e equipamento
-  // AGUARDANDO_TRIAGEM): depois disso, ele já faz parte do histórico de rastreabilidade.
+  // Exclusão definitiva do equipamento (e das movimentações dele), em qualquer fase. Equipamento não tem soft delete.
   async excluir(id: string, versao: number, usuario: string): Promise<void> {
     await prisma.$transaction(async (tx) => {
       const e = await this.repo.buscarPorId(id, tx);
       if (!e) throw new NaoEncontrado('Equipamento');
-      if (e.lote.statusProcessamento !== StatusLote.RECEBIDO || e.statusRastreamento !== Status.AGUARDANDO_TRIAGEM) {
-        throw new RegraNegocio(
-          'Só é possível excluir equipamentos antes da triagem (lote RECEBIDO e equipamento AGUARDANDO_TRIAGEM). Depois disso o equipamento faz parte do histórico.'
-        );
-      }
       const movimentacoes = await this.repo.contarMovimentacoes(id, tx);
       // Mexer na versão do lote impede que a exclusão corra junto com a triagem do mesmo lote.
       await this.lotes.incrementarVersao(e.loteId, tx);

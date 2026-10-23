@@ -62,6 +62,11 @@ function resumo(l: { id: string; statusProcessamento: string; equipamentos: { pe
   };
 }
 
+// Lote inativado (soft delete) fica só para consulta: não aceita mais alterações até ser reativado.
+function exigirAtivo(l: { ativo: boolean }): void {
+  if (!l.ativo) throw new RegraNegocio('O lote está inativo. Reative-o para alterá-lo.');
+}
+
 export class LoteServico {
   constructor(
     private readonly lotes = new LoteRepositorio(),
@@ -70,9 +75,9 @@ export class LoteServico {
     private readonly validadorData = new ValidadorDataEntrada()
   ) {}
 
-  async listar(f: { organizacaoId?: string; status?: TStatusLote; inicio?: string; fim?: string }) {
+  async listar(f: { organizacaoId?: string; status?: TStatusLote; ativo?: boolean; inicio?: string; fim?: string }) {
     const per = f.inicio || f.fim ? intervalo(f.inicio, f.fim) : undefined;
-    return this.lotes.listar({ organizacaoId: f.organizacaoId, status: f.status, inicio: per?.inicio, fim: per?.fim });
+    return this.lotes.listar({ organizacaoId: f.organizacaoId, status: f.status, ativo: f.ativo, inicio: per?.inicio, fim: per?.fim });
   }
 
   async buscar(id: string) {
@@ -90,6 +95,10 @@ export class LoteServico {
     const org = await this.organizacoes.buscarPorId(d.organizacaoId);
     if (!org) throw new NaoEncontrado('Organização');
     if (!org.ativo) throw new RegraNegocio('A organização está inativa e não pode receber novos lotes.');
+    // Só entra lote em organização com contrato ATIVO (vigente).
+    if (!org.contrato || org.contrato.dataVencimento.getTime() < Date.now()) {
+      throw new RegraNegocio('A organização não possui contrato ativo e não pode receber novos lotes.');
+    }
     validarItens(d.equipamentos ?? []);
 
     const id = await prisma.$transaction(async (tx) => {
@@ -121,6 +130,7 @@ export class LoteServico {
     await prisma.$transaction(async (tx) => {
       const lote = await this.lotes.buscarPorId(loteId, tx);
       if (!lote) throw new NaoEncontrado('Lote');
+      exigirAtivo(lote);
       if (lote.statusProcessamento !== StatusLote.RECEBIDO) {
         throw new RegraNegocio('Só é possível adicionar equipamentos a lotes com status RECEBIDO (antes da triagem).');
       }
@@ -145,6 +155,7 @@ export class LoteServico {
     await prisma.$transaction(async (tx) => {
       const lote = await this.lotes.buscarPorId(loteId, tx);
       if (!lote) throw new NaoEncontrado('Lote');
+      exigirAtivo(lote);
       if (lote.statusProcessamento !== StatusLote.RECEBIDO) {
         throw new RegraNegocio(`A triagem só pode ser processada em lotes RECEBIDO (status atual: ${lote.statusProcessamento}).`);
       }
@@ -184,6 +195,7 @@ export class LoteServico {
     await prisma.$transaction(async (tx) => {
       const lote = await this.lotes.buscarPorId(loteId, tx);
       if (!lote) throw new NaoEncontrado('Lote');
+      exigirAtivo(lote);
 
       if (PROXIMO_STATUS[lote.statusProcessamento] !== novo) {
         throw new RegraNegocio(`Transição inválida: ${lote.statusProcessamento} -> ${novo}.`);
@@ -198,6 +210,30 @@ export class LoteServico {
         entidadeId: loteId,
         dadosAntes: { statusProcessamento: lote.statusProcessamento },
         dadosDepois: { statusProcessamento: novo },
+        usuario
+      });
+    });
+    return this.buscar(loteId);
+  }
+
+  // Soft delete: inativa o lote (ele continua no banco, só deixa de aceitar alterações) ou o reativa.
+  // Ao inativar, os equipamentos do lote passam a ser tratados como inativos (ficam bloqueados para alteração).
+  async alterarAtivo(loteId: string, ativo: boolean, versao: number, usuario: string) {
+    await prisma.$transaction(async (tx) => {
+      const lote = await this.lotes.buscarPorId(loteId, tx);
+      if (!lote) throw new NaoEncontrado('Lote');
+      if (lote.ativo === ativo) throw new RegraNegocio(`O lote já está ${ativo ? 'ativo' : 'inativo'}.`);
+      if (ativo) {
+        const org = await this.organizacoes.buscarPorId(lote.organizacaoId, tx);
+        if (!org?.ativo) throw new RegraNegocio('A organização do lote está inativa. Reative-a antes de reativar o lote.');
+      }
+      exigirAtualizacao(await this.lotes.atualizarComVersao(loteId, versao, { ativo }, tx), true, 'Lote');
+      await registrarJournal(tx, {
+        operacao: 'ATUALIZAR',
+        entidade: 'Lote',
+        entidadeId: loteId,
+        dadosAntes: { ativo: lote.ativo },
+        dadosDepois: { ativo, equipamentosAfetados: lote.equipamentos.length },
         usuario
       });
     });
@@ -222,6 +258,7 @@ export class LoteServico {
     await prisma.$transaction(async (tx) => {
       const lote = await this.lotes.buscarPorId(loteId, tx);
       if (!lote) throw new NaoEncontrado('Lote');
+      exigirAtivo(lote);
       if (lote.statusProcessamento === StatusLote.FINALIZADO) {
         throw new RegraNegocio('Lote finalizado não pode ser alterado.');
       }
@@ -237,20 +274,12 @@ export class LoteServico {
     return this.buscar(loteId);
   }
 
-  // Exclui um lote registrado por engano (junto com seus equipamentos e movimentações). Só antes da triagem.
-  // Cada item removido fica registrado no journal, então a exclusão continua auditável.
+  // Exclusão definitiva (hard delete) em cadeia: remove o lote, seus equipamentos e as movimentações deles.
+  // Vale em qualquer status. Cada item removido fica registrado no journal, então a exclusão continua auditável.
   async excluir(loteId: string, versao: number, usuario: string): Promise<void> {
     await prisma.$transaction(async (tx) => {
       const lote = await this.lotes.buscarPorId(loteId, tx);
       if (!lote) throw new NaoEncontrado('Lote');
-      if (lote.statusProcessamento !== StatusLote.RECEBIDO) {
-        throw new RegraNegocio(
-          `Só é possível excluir lotes com status RECEBIDO (antes da triagem). Status atual: ${lote.statusProcessamento}.`
-        );
-      }
-      if (lote.equipamentos.some((e) => e.statusRastreamento !== StatusRastreamento.AGUARDANDO_TRIAGEM)) {
-        throw new RegraNegocio('O lote possui equipamentos já movimentados e não pode ser excluído.');
-      }
 
       await this.equipamentos.excluirDoLote(loteId, tx);
       exigirAtualizacao(await this.lotes.excluirComVersao(loteId, versao, tx), true, 'Lote');

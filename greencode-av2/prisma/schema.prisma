@@ -121,6 +121,7 @@ model Lote {
   notaFiscal          String     @db.VarChar(60)
   transportadora      String     @db.VarChar(120)
   statusProcessamento StatusLote @default(RECEBIDO)
+  ativo               Boolean    @default(true)
   observacoes         String     @db.Text
   criadoEm            DateTime   @default(now())
   atualizadoEm        DateTime   @updatedAt

@@ -128,7 +128,7 @@ export async function rotasEquipamentos(app: FastifyInstance): Promise<void> {
       preHandler: escrita,
       schema: {
         tags: TAG,
-        summary: 'Exclui um equipamento cadastrado por engano (só antes da triagem). Informe ?versao=',
+        summary: 'Exclusão definitiva do equipamento e das movimentações dele. Informe ?versao=',
         security: seguranca,
         params: idParam,
         querystring: versaoQuery
