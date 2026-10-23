@@ -6,7 +6,7 @@ import { registrarJournal } from '../utils/auditoria';
 import { exigirAtualizacao } from '../utils/versao';
 import { validarMudancaEstadoFisico } from '../regras/estadoFisico';
 import { statusLoteDerivado } from '../regras/statusLote';
-import { lerPaginacao } from '../utils/paginacao';
+import { lerPaginacao, montarPagina } from '../utils/paginacao';
 import type { Prisma } from '@prisma/client';
 import { transicoesPermitidas, validarTransicaoRastreamento } from '../regras/rastreamento';
 import { StatusLote, StatusRastreamento as Status } from '../dominio/enums';
@@ -36,7 +36,7 @@ export class EquipamentoServico {
   async listar(f: { status?: StatusRastreamento; tipo?: TipoEquipamento; loteId?: string; pagina?: number; limite?: number }) {
     const pag = lerPaginacao(f);
     const [itens, total] = await this.repo.listar({ status: f.status, tipo: f.tipo, loteId: f.loteId }, pag);
-    return { itens, total, pagina: pag.pagina, limite: pag.limite };
+    return montarPagina(itens, total, pag);
   }
 
   // O status do lote é derivado dos equipamentos: só muda quando TODOS têm o mesmo status (ver regras/statusLote.ts).

@@ -1,6 +1,7 @@
 import { paginacaoQuery } from '../utils/paginacao';
 import type { FastifyInstance } from 'fastify';
 import { UsuarioController } from '../controllers/UsuarioController';
+import { seguranca, idParam } from './comum';
 import { GRUPOS } from '../seguranca/permissoes';
 import { PapelUsuario } from '../dominio/enums';
 
@@ -8,12 +9,6 @@ import { PapelUsuario } from '../dominio/enums';
 const PAPEIS_ATRIBUIVEIS = Object.values(PapelUsuario).filter((p) => p !== PapelUsuario.SUPERUSUARIO);
 
 const TAG = ['Usuários'];
-const seguranca = [{ bearerAuth: [] }];
-const idParam = {
-  type: 'object',
-  required: ['id'],
-  properties: { id: { type: 'string', minLength: 36, maxLength: 36 } }
-};
 
 export async function rotasUsuarios(app: FastifyInstance): Promise<void> {
   const c = new UsuarioController();

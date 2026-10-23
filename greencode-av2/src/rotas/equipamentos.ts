@@ -1,14 +1,11 @@
 import type { FastifyInstance } from 'fastify';
 import { EquipamentoController } from '../controllers/EquipamentoController';
+import { seguranca, idParam, versao, versaoQuery } from './comum';
 import { GRUPOS } from '../seguranca/permissoes';
 import { paginacaoQuery } from '../utils/paginacao';
 import { EstadoFisico, StatusRastreamento, TipoEquipamento } from '../dominio/enums';
 
-const seguranca = [{ bearerAuth: [] }];
 const TAG = ['Equipamentos'];
-const idParam = { type: 'object', required: ['id'], properties: { id: { type: 'string', minLength: 36, maxLength: 36 } } };
-const versao = { type: 'integer', minimum: 1 };
-const versaoQuery = { type: 'object', required: ['versao'], properties: { versao } };
 
 export async function rotasEquipamentos(app: FastifyInstance): Promise<void> {
   const c = new EquipamentoController();

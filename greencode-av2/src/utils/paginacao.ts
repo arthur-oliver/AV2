@@ -2,8 +2,8 @@ import type { FastifyReply } from 'fastify';
 
 // Paginação das listagens: ?pagina=1&limite=100. A resposta continua sendo a lista (array) e o total
 // vai nos cabeçalhos X-Total-Count, X-Pagina e X-Limite.
-export const LIMITE_PADRAO = 100;
-export const LIMITE_MAXIMO = 500;
+const LIMITE_PADRAO = 100;
+const LIMITE_MAXIMO = 500;
 
 export const paginacaoQuery = {
   pagina: { type: 'integer', minimum: 1, description: 'Página (padrão: 1)' },
@@ -28,6 +28,11 @@ export interface Pagina<T> {
   total: number;
   pagina: number;
   limite: number;
+}
+
+// Monta o resultado de uma listagem paginada a partir do que o repositório devolveu.
+export function montarPagina<T>(itens: T[], total: number, pag: Paginacao): Pagina<T> {
+  return { itens, total, pagina: pag.pagina, limite: pag.limite };
 }
 
 // Coloca o total nos cabeçalhos e devolve só a lista.

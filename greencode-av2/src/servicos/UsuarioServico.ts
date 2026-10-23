@@ -1,4 +1,4 @@
-import { lerPaginacao } from '../utils/paginacao';
+import { lerPaginacao, montarPagina } from '../utils/paginacao';
 import { prisma } from '../lib/prisma';
 import { UsuarioRepositorio } from '../repositorios/UsuarioRepositorio';
 import { gerarHashSenha } from '../seguranca/senha';
@@ -27,7 +27,7 @@ export class UsuarioServico {
   async listar(filtro: { papel?: PapelUsuario; ativo?: boolean; pagina?: number; limite?: number } = {}) {
     const pag = lerPaginacao(filtro);
     const [itens, total] = await this.usuarios.listar({ papel: filtro.papel, ativo: filtro.ativo }, pag);
-    return { itens, total, pagina: pag.pagina, limite: pag.limite };
+    return montarPagina(itens, total, pag);
   }
 
   async buscar(id: string) {

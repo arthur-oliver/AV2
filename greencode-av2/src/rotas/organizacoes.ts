@@ -1,19 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import { OrganizacaoController } from '../controllers/OrganizacaoController';
 import { paginacaoQuery } from '../utils/paginacao';
+import { seguranca, idParam, versao, versaoQuery } from './comum';
 import { GRUPOS } from '../seguranca/permissoes';
 
-const seguranca = [{ bearerAuth: [] }];
 const TAG = ['Organizações'];
-
-const idParam = {
-  type: 'object',
-  required: ['id'],
-  properties: { id: { type: 'string', minLength: 36, maxLength: 36 } }
-};
-
-const versao = { type: 'integer', minimum: 1 };
-const versaoQuery = { type: 'object', required: ['versao'], properties: { versao } };
 
 const contratoProps = {
   dataAssinatura: { type: 'string', minLength: 10, maxLength: 30 },

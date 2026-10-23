@@ -4,8 +4,8 @@ import { LoteRepositorio } from '../repositorios/LoteRepositorio';
 import { EquipamentoRepositorio } from '../repositorios/EquipamentoRepositorio';
 import { ValidadorCNPJ, somenteDigitos } from '../validadores/ValidadorCNPJ';
 import { Conflito, ErroValidacao, NaoEncontrado, RegraNegocio } from '../erros/AppError';
-import { lerPaginacao } from '../utils/paginacao';
-import { registrarJournal } from '../utils/auditoria';
+import { lerPaginacao, montarPagina } from '../utils/paginacao';
+import { registrarExclusaoDeLote, registrarJournal } from '../utils/auditoria';
 import { exigirAtualizacao } from '../utils/versao';
 
 export interface DadosContrato {
@@ -65,7 +65,7 @@ export class OrganizacaoServico {
   async listar(filtro: { ativo?: boolean; busca?: string; pagina?: number; limite?: number }) {
     const pag = lerPaginacao(filtro);
     const [itens, total] = await this.repo.listar({ ativo: filtro.ativo, busca: filtro.busca }, pag);
-    return { itens: itens.map(comVigencia), total, pagina: pag.pagina, limite: pag.limite };
+    return montarPagina(itens.map(comVigencia), total, pag);
   }
 
   async buscar(id: string) {
@@ -229,18 +229,8 @@ export class OrganizacaoServico {
       }
       exigirAtualizacao(await this.repo.excluirComVersao(id, versao, tx), true, 'Organização');
 
-      for (const l of lotes) {
-        const { equipamentos, ...dadosLote } = l;
-        for (const e of equipamentos) {
-          await registrarJournal(tx, { operacao: 'EXCLUIR', entidade: 'Equipamento', entidadeId: e.id, dadosAntes: e, usuario });
-        }
-        await registrarJournal(tx, {
-          operacao: 'EXCLUIR',
-          entidade: 'Lote',
-          entidadeId: l.id,
-          dadosAntes: { ...dadosLote, equipamentosRemovidos: equipamentos.map((e) => e.codigoBarrasInterno) },
-          usuario
-        });
+      for (const { equipamentos, ...dadosLote } of lotes) {
+        await registrarExclusaoDeLote(tx, { id: dadosLote.id, equipamentos }, dadosLote, usuario);
       }
       if (contrato) {
         await registrarJournal(tx, { operacao: 'EXCLUIR', entidade: 'Contrato', entidadeId: contrato.id, dadosAntes: contrato, usuario });

@@ -1,14 +1,11 @@
 import type { FastifyInstance } from 'fastify';
 import { LoteController } from '../controllers/LoteController';
+import { seguranca, idParam, versao, versaoQuery } from './comum';
 import { GRUPOS } from '../seguranca/permissoes';
 import { EstadoFisico, StatusLote, TipoEquipamento } from '../dominio/enums';
 import { paginacaoQuery } from '../utils/paginacao';
 
-const seguranca = [{ bearerAuth: [] }];
 const TAG = ['Lotes'];
-const idParam = { type: 'object', required: ['id'], properties: { id: { type: 'string', minLength: 36, maxLength: 36 } } };
-const versao = { type: 'integer', minimum: 1 };
-const versaoQuery = { type: 'object', required: ['versao'], properties: { versao } };
 
 export const itemEquipamento = {
   type: 'object',

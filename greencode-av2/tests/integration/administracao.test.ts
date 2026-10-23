@@ -26,6 +26,14 @@ async function criarUsuario(papel: string, apelido: string) {
   return u;
 }
 
+// Organização de teste com contrato ativo (nome com sufixo único).
+const criarOrganizacao = (rotulo: string, token = tokens.operador) =>
+  req(token, 'POST', '/organizacoes', {
+    razaoSocial: `${rotulo} ${SUFIXO}`,
+    cnpj: gerarCnpjValido(),
+    contrato: { dataVencimento: '2099-12-31', clausulas: ['Teste'], valorMensal: 10 }
+  });
+
 const buscarUsuario = async (id: string) => (await req(tokens.super, 'GET', `/usuarios/${id}`)).json();
 const buscarLote = async (id: string) => (await req(tokens.gestor, 'GET', `/lotes/${id}`)).json();
 const buscarEquipamento = async (id: string) => (await req(tokens.gestor, 'GET', `/equipamentos/${id}`)).json();
@@ -250,11 +258,7 @@ describe('superusuário: único responsável pelas contas', () => {
     expect((await req(tokens.super, 'GET', '/auditoria')).statusCode).toBe(200);
     expect((await req(tokens.super, 'GET', '/relatorios/financeiro')).statusCode).toBe(200);
 
-    const org = await req(tokens.super, 'POST', '/organizacoes', {
-      razaoSocial: `Super ${SUFIXO}`,
-      cnpj: gerarCnpjValido(),
-      contrato: { dataVencimento: '2099-12-31', clausulas: ['Teste'], valorMensal: 10 }
-    });
+    const org = await criarOrganizacao('Super', tokens.super);
     expect(org.statusCode).toBe(201);
     const lote = await req(tokens.super, 'POST', '/lotes', {
       organizacaoId: org.json().id,
@@ -481,11 +485,7 @@ describe('lotes e equipamentos: correção e exclusão', () => {
 // ---------------------------------------------------------------------------------------------
 describe('organizações e contratos: exclusão', () => {
   it('exclui organização sem lotes (e o contrato dela) e registra no journal', async () => {
-    const r = await req(tokens.operador, 'POST', '/organizacoes', {
-      razaoSocial: `Cadastro errado ${SUFIXO}`,
-      cnpj: gerarCnpjValido(),
-      contrato: { dataVencimento: '2099-12-31', clausulas: ['Teste'], valorMensal: 10 }
-    });
+    const r = await criarOrganizacao('Cadastro errado', tokens.operador);
     const org = r.json() as { id: string; versao: number; contrato: { id: string } };
 
     expect((await req(tokens.operador, 'DELETE', `/organizacoes/${org.id}?versao=${org.versao + 4}`)).statusCode).toBe(409);
@@ -503,11 +503,7 @@ describe('organizações e contratos: exclusão', () => {
   });
 
   it('remove o contrato de uma organização sem lotes em aberto', async () => {
-    const r = await req(tokens.operador, 'POST', '/organizacoes', {
-      razaoSocial: `Sem contrato ${SUFIXO}`,
-      cnpj: gerarCnpjValido(),
-      contrato: { dataVencimento: '2099-12-31', clausulas: ['Teste'], valorMensal: 10 }
-    });
+    const r = await criarOrganizacao('Sem contrato', tokens.operador);
     const org = r.json() as { id: string; contrato: { versao: number } };
 
     expect((await req(tokens.operador, 'DELETE', `/organizacoes/${org.id}/contrato?versao=${org.contrato.versao + 3}`)).statusCode).toBe(409);
@@ -525,11 +521,7 @@ describe('organizações e contratos: exclusão', () => {
 // ---------------------------------------------------------------------------------------------
 describe('soft delete e exclusão em cadeia', () => {
   async function criarCenario(rotulo: string) {
-    const org = await req(tokens.operador, 'POST', '/organizacoes', {
-      razaoSocial: `${rotulo} ${SUFIXO}`,
-      cnpj: gerarCnpjValido(),
-      contrato: { dataVencimento: '2099-12-31', clausulas: ['Teste'], valorMensal: 10 }
-    });
+    const org = await criarOrganizacao(rotulo);
     expect(org.statusCode).toBe(201);
     const orgId = org.json().id as string;
     const lotes: { id: string; eqIds: string[] }[] = [];
@@ -666,11 +658,7 @@ describe('soft delete e exclusão em cadeia', () => {
 // ---------------------------------------------------------------------------------------------
 describe('status do lote derivado dos equipamentos', () => {
   async function loteComDoisEquipamentos(rotulo: string) {
-    const org = await req(tokens.operador, 'POST', '/organizacoes', {
-      razaoSocial: `${rotulo} ${SUFIXO}`,
-      cnpj: gerarCnpjValido(),
-      contrato: { dataVencimento: '2099-12-31', clausulas: ['Teste'], valorMensal: 10 }
-    });
+    const org = await criarOrganizacao(rotulo);
     const l = await req(tokens.gestor, 'POST', '/lotes', {
       organizacaoId: org.json().id,
       notaFiscal: `NF-${rotulo}`,
@@ -745,11 +733,7 @@ describe('paginação, relatórios e código de barras', () => {
   });
 
   it('relatórios ignoram lotes inativos, a menos que ?incluirInativos=true', async () => {
-    const org = await req(tokens.operador, 'POST', '/organizacoes', {
-      razaoSocial: `Relatório ${SUFIXO}`,
-      cnpj: gerarCnpjValido(),
-      contrato: { dataVencimento: '2099-12-31', clausulas: ['Teste'], valorMensal: 10 }
-    });
+    const org = await criarOrganizacao('Relatório', tokens.operador);
     const orgId = org.json().id as string;
     const l = await req(tokens.gestor, 'POST', '/lotes', {
       organizacaoId: orgId,
@@ -775,11 +759,7 @@ describe('paginação, relatórios e código de barras', () => {
   });
 
   it('o código de barras do equipamento é o próprio id e não pode ser informado', async () => {
-    const org = await req(tokens.operador, 'POST', '/organizacoes', {
-      razaoSocial: `Barras ${SUFIXO}`,
-      cnpj: gerarCnpjValido(),
-      contrato: { dataVencimento: '2099-12-31', clausulas: ['Teste'], valorMensal: 10 }
-    });
+    const org = await criarOrganizacao('Barras', tokens.operador);
     const l = await req(tokens.gestor, 'POST', '/lotes', {
       organizacaoId: org.json().id,
       notaFiscal: 'NF-BAR',

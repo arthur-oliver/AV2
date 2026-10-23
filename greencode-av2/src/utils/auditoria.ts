@@ -34,4 +34,23 @@ export async function registrarJournal(
   });
 }
 
+// Registra no journal a exclusão de um lote e de cada equipamento dele (usado ao excluir o lote ou a organização).
+export async function registrarExclusaoDeLote(
+  tx: Prisma.TransactionClient,
+  lote: { id: string; equipamentos: { id: string; codigoBarrasInterno: string }[] },
+  dadosLote: unknown,
+  usuario: string
+): Promise<void> {
+  for (const e of lote.equipamentos) {
+    await registrarJournal(tx, { operacao: 'EXCLUIR', entidade: 'Equipamento', entidadeId: e.id, dadosAntes: e, usuario });
+  }
+  await registrarJournal(tx, {
+    operacao: 'EXCLUIR',
+    entidade: 'Lote',
+    entidadeId: lote.id,
+    dadosAntes: { ...(dadosLote as object), equipamentosRemovidos: lote.equipamentos.map((e) => e.codigoBarrasInterno) },
+    usuario
+  });
+}
+
 // escrito com carinho por Arthur.

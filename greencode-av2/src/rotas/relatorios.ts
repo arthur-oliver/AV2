@@ -1,9 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import { RelatorioController } from '../controllers/RelatorioController';
+import { seguranca } from './comum';
 import { GRUPOS } from '../seguranca/permissoes';
 import { StatusRastreamento } from '../dominio/enums';
 
-const seguranca = [{ bearerAuth: [] }];
 const periodo = {
   inicio: { type: 'string', maxLength: 30, description: 'AAAA-MM-DD (padrão: 90 dias atrás)' },
   fim: { type: 'string', maxLength: 30, description: 'AAAA-MM-DD (padrão: agora)' }

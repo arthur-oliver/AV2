@@ -50,10 +50,6 @@ export class OrganizacaoRepositorio {
   }
 
   // Total de lotes da organização (qualquer status): quem já enviou lotes faz parte do histórico.
-  contarLotes(organizacaoId: string, tx: Cliente = prisma) {
-    return tx.lote.count({ where: { organizacaoId } });
-  }
-
   async excluirContratoComVersao(id: string, versao: number, tx: Cliente = prisma) {
     const r = await tx.contrato.deleteMany({ where: { id, versao } });
     return r.count;

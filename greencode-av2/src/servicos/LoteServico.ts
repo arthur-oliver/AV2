@@ -5,10 +5,10 @@ import { EquipamentoRepositorio } from '../repositorios/EquipamentoRepositorio';
 import { OrganizacaoRepositorio } from '../repositorios/OrganizacaoRepositorio';
 import { ValidadorDataEntrada } from '../validadores/ValidadorDataEntrada';
 import { ErroValidacao, NaoEncontrado, RegraNegocio } from '../erros/AppError';
-import { registrarJournal } from '../utils/auditoria';
+import { registrarExclusaoDeLote, registrarJournal } from '../utils/auditoria';
 import { exigirAtualizacao } from '../utils/versao';
 import { randomUUID } from 'crypto';
-import { lerPaginacao } from '../utils/paginacao';
+import { lerPaginacao, montarPagina } from '../utils/paginacao';
 import { intervalo, lerData } from '../utils/datas';
 import { EstadoFisico, StatusLote, StatusRastreamento } from '../dominio/enums';
 import type { EstadoFisico as TEstado, StatusLote as TStatusLote, TipoEquipamento } from '../dominio/enums';
@@ -73,7 +73,7 @@ export class LoteServico {
     const per = f.inicio || f.fim ? intervalo(f.inicio, f.fim) : undefined;
     const pag = lerPaginacao(f);
     const [itens, total] = await this.lotes.listar({ organizacaoId: f.organizacaoId, status: f.status, ativo: f.ativo, inicio: per?.inicio, fim: per?.fim }, pag);
-    return { itens, total, pagina: pag.pagina, limite: pag.limite };
+    return montarPagina(itens, total, pag);
   }
 
   async buscar(id: string) {
@@ -256,16 +256,7 @@ export class LoteServico {
       exigirAtualizacao(await this.lotes.excluirComVersao(loteId, versao, tx), true, 'Lote');
 
       const { equipamentos, organizacao: _org, ...dadosLote } = lote;
-      for (const e of equipamentos) {
-        await registrarJournal(tx, { operacao: 'EXCLUIR', entidade: 'Equipamento', entidadeId: e.id, dadosAntes: e, usuario });
-      }
-      await registrarJournal(tx, {
-        operacao: 'EXCLUIR',
-        entidade: 'Lote',
-        entidadeId: loteId,
-        dadosAntes: { ...dadosLote, equipamentosRemovidos: equipamentos.map((e) => e.codigoBarrasInterno) },
-        usuario
-      });
+      await registrarExclusaoDeLote(tx, { id: loteId, equipamentos }, dadosLote, usuario);
     });
   }
 

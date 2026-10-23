@@ -59,10 +59,6 @@ export class EquipamentoRepositorio {
     return r.count;
   }
 
-  equipamentosNaoBaixados(loteId: string, tx: Cliente = prisma) {
-    return tx.equipamento.count({ where: { loteId, statusRastreamento: { not: 'BAIXA_DEFINITIVA' } } });
-  }
-
   contarMovimentacoes(equipamentoId: string, tx: Cliente = prisma) {
     return tx.movimentacao.count({ where: { equipamentoId } });
   }
